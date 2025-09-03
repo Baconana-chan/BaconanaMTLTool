@@ -12,3 +12,15 @@ rich==14.1.0
 click==8.2.1
 construct==2.10.70
 pandas==2.3.2
+transformers==4.56.0
+requests==2.32.5
+aiohttp==3.12.15
+
+# Light Novel format support
+python-docx==1.1.2
+PyPDF2==3.0.1
+pdfplumber==0.11.4
+ebooklib==0.18
+reportlab==4.2.5
+beautifulsoup4==4.12.3
+chardet==5.2.0

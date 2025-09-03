@@ -1,7 +1,7 @@
 """
 Translation Manager
 Handles the translation process for RPG Maker MV/MZ games, Ren'Py games, Unity projects, 
-Wolf RPG Editor, KiriKiri, and NScripter games
+Wolf RPG Editor, KiriKiri, NScripter games, and Light Novels
 """
 
 import os
@@ -12,6 +12,7 @@ import time
 from typing import Dict, List, Any, Optional, Tuple
 from PyQt5.QtCore import QThread, pyqtSignal
 from core.api_client import APIClient
+from core.provider_manager import ProviderManager
 from core.file_processor import FileProcessor
 from core.renpy_processor import RenpyProcessor
 from core.unity_processor import UnityProcessor
@@ -23,6 +24,7 @@ from core.tyranobuilder_processor import TyranoBuilderProcessor
 from core.srpg_studio_processor import SRPGStudioProcessor
 from core.lune_processor import LuneProcessor
 from core.regex_processor import RegexProcessor
+from core.lightnovel_processor import LightNovelProcessor
 
 
 class TranslationManager(QThread):
@@ -41,7 +43,12 @@ class TranslationManager(QThread):
         self.input_dir = input_dir
         self.output_dir = output_dir
         
+        # Initialize provider manager instead of direct API client
+        self.provider_manager = ProviderManager()
+        
+        # Keep API client for backward compatibility
         self.api_client = APIClient(config)
+        
         self.file_processor = FileProcessor()
         self.renpy_processor = RenpyProcessor()
         self.unity_processor = UnityProcessor()
@@ -53,8 +60,10 @@ class TranslationManager(QThread):
         self.srpg_studio_processor = SRPGStudioProcessor()
         self.lune_processor = LuneProcessor()
         self.regex_processor = RegexProcessor()
+        self.lightnovel_processor = LightNovelProcessor()
         
         # Detect project type
+        self.is_lightnovel_project = self._detect_lightnovel_project(input_dir)
         self.is_renpy_project = self.renpy_processor.detect_renpy_project(input_dir)
         self.is_unity_project = self.unity_processor.detect_unity_project(input_dir)
         self.is_wolf_project = self.wolf_processor.detect_wolf_project(input_dir)
@@ -66,7 +75,9 @@ class TranslationManager(QThread):
         self.is_lune_project = len(self.lune_processor.find_lune_files(input_dir)) > 0
         self.is_regex_project = len(self.regex_processor.find_regex_files(input_dir)) > 0
         
-        if self.is_renpy_project:
+        if self.is_lightnovel_project:
+            self.project_type = "Light Novel"
+        elif self.is_renpy_project:
             self.project_type = "Ren'Py"
         elif self.is_unity_project:
             self.project_type = "Unity"
@@ -101,13 +112,20 @@ class TranslationManager(QThread):
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
     
+    def setup_providers(self, provider_configs: Dict[str, Dict[str, Any]]):
+        """Setup multiple providers with configurations"""
+        self.provider_manager.setup_providers(provider_configs)
+        self.log_message.emit(f"Configured {len(provider_configs)} providers")
+    
     def run(self):
         """Main translation process"""
         try:
             self.log_message.emit(f"Starting translation process for {self.project_type} project...")
             
             # Handle different project types
-            if self.is_unity_project:
+            if self.is_lightnovel_project:
+                self.process_lightnovel_project(self.input_dir, self.output_dir, self.config['target_language'])
+            elif self.is_unity_project:
                 self.process_unity_project(self.input_dir, self.output_dir, self.config['target_language'])
             elif self.is_wolf_project:
                 self.process_wolf_project(self.input_dir, self.output_dir, self.config['target_language'])
@@ -309,7 +327,7 @@ class TranslationManager(QThread):
             raise Exception(f"Failed to process file {file_path}: {str(e)}")
     
     def translate_texts(self, texts: List[str]) -> List[str]:
-        """Translate a list of texts using the API"""
+        """Translate a list of texts using the configured providers with fallback"""
         batch_size = int(self.config.get('batchsize', 10))
         translated_texts = []
         
@@ -338,9 +356,18 @@ class TranslationManager(QThread):
                 # Prepare batch for translation
                 batch_dict = {f"Line{j+1}": text for j, text in enumerate(batch)}
                 
-                # Get translation from API
-                self.log_message.emit(f"Sending request to {self.config.get('model', 'API')}...")
-                translated_batch = self.api_client.translate_batch(batch_dict)
+                # Try translation with provider manager (with fallback)
+                self.log_message.emit("Attempting translation with provider fallback...")
+                try:
+                    translated_batch = self.provider_manager.translate_with_fallback(
+                        batch_dict, 
+                        self.config.get('target_language', 'en')
+                    )
+                except Exception as provider_error:
+                    # Fall back to direct API client if provider manager fails
+                    self.log_message.emit(f"Provider manager failed: {provider_error}")
+                    self.log_message.emit(f"Falling back to direct API: {self.config.get('model', 'API')}...")
+                    translated_batch = self.api_client.translate_batch(batch_dict)
                 
                 # Extract translated texts in order
                 successful_translations = 0
@@ -867,4 +894,126 @@ class TranslationManager(QThread):
                 
         except Exception as e:
             self.log_message.emit(f"Error processing Regex project: {str(e)}")
+    
+    def _detect_lightnovel_project(self, input_dir: str) -> bool:
+        """Detect if directory contains light novel files"""
+        light_novel_extensions = ['.txt', '.docx', '.pdf', '.epub']
+        
+        for ext in light_novel_extensions:
+            pattern = os.path.join(input_dir, f"*{ext}")
+            files = glob.glob(pattern)
+            if files:
+                # Check if any file can be processed
+                for file_path in files:
+                    if self.lightnovel_processor.can_process(file_path):
+                        return True
+        
+        return False
+    
+    def process_lightnovel_project(self, input_dir: str, output_dir: str, target_language: str):
+        """Process light novel files"""
+        try:
+            self.log_message.emit("Processing Light Novel project...")
+            
+            # Find all light novel files
+            light_novel_files = []
+            light_novel_extensions = ['.txt', '.docx', '.pdf', '.epub']
+            
+            for ext in light_novel_extensions:
+                pattern = os.path.join(input_dir, f"*{ext}")
+                files = glob.glob(pattern)
+                for file_path in files:
+                    if self.lightnovel_processor.can_process(file_path):
+                        light_novel_files.append(file_path)
+            
+            if not light_novel_files:
+                self.log_message.emit("No compatible light novel files found")
+                return
+            
+            self.log_message.emit(f"Found {len(light_novel_files)} light novel files to process")
+            
+            # Process each file
+            for i, file_path in enumerate(light_novel_files):
+                if self.is_stopped:
+                    break
+                
+                while self.is_paused and not self.is_stopped:
+                    time.sleep(0.1)
+                
+                filename = os.path.basename(file_path)
+                self.progress_updated.emit(i + 1, len(light_novel_files), filename)
+                self.log_message.emit(f"Processing: {filename}")
+                
+                # Extract text from file
+                extracted_data = self.lightnovel_processor.extract_text(file_path)
+                
+                if "error" in extracted_data:
+                    self.log_message.emit(f"Error extracting from {filename}: {extracted_data['error']}")
+                    continue
+                
+                # Get translatable content
+                translatable_content = self.lightnovel_processor.get_translatable_content(extracted_data)
+                
+                if not translatable_content:
+                    self.log_message.emit(f"No translatable content found in {filename}")
+                    continue
+                
+                self.log_message.emit(f"Found {len(translatable_content)} translatable sections")
+                
+                # Prepare texts for translation
+                texts_to_translate = [item["original"] for item in translatable_content]
+                
+                # Use light novel specific prompt
+                original_prompt = self.config.get('custom_prompt', '')
+                light_novel_prompt = self.lightnovel_processor.get_light_novel_prompt()
+                self.config['custom_prompt'] = light_novel_prompt
+                
+                # Translate texts
+                self.log_message.emit("Starting translation...")
+                translated_texts = self.translate_texts(texts_to_translate)
+                
+                # Restore original prompt
+                self.config['custom_prompt'] = original_prompt
+                
+                # Apply translations to content
+                for j, item in enumerate(translatable_content):
+                    if j < len(translated_texts):
+                        item["translated"] = translated_texts[j]
+                    else:
+                        item["translated"] = item["original"]
+                
+                # Determine output format (same as input or configurable)
+                input_ext = os.path.splitext(file_path)[1].lower()
+                output_format = self.config.get('lightnovel_output_format', input_ext[1:])  # Remove dot
+                
+                # Create output file
+                base_name = os.path.splitext(filename)[0]
+                output_path = os.path.join(output_dir, f"{base_name}_translated.{output_format}")
+                
+                result_file = self.lightnovel_processor.create_translation_file(
+                    output_path, translatable_content, extracted_data.get("metadata", {}), output_format
+                )
+                
+                self.log_message.emit(f"Saved translated file: {os.path.basename(result_file)}")
+                
+                # Also create a JSON summary for reference
+                summary_file = os.path.join(output_dir, f"{base_name}_translation_summary.json")
+                
+                summary_data = {
+                    "original_file": filename,
+                    "output_file": os.path.basename(result_file),
+                    "format": output_format,
+                    "metadata": extracted_data.get("metadata", {}),
+                    "chapters": len(extracted_data.get("chapters", [])),
+                    "translated_sections": len(translatable_content),
+                    "translations": translatable_content
+                }
+                
+                with open(summary_file, 'w', encoding='utf-8') as f:
+                    json.dump(summary_data, f, ensure_ascii=False, indent=2)
+                
+                self.log_message.emit(f"Saved summary: {os.path.basename(summary_file)}")
+                
+        except Exception as e:
+            self.log_message.emit(f"Error processing Light Novel project: {str(e)}")
             raise

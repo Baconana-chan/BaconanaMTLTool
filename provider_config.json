@@ -1,0 +1,34 @@
+{
+  "providers": {
+    "OpenAI": {
+      "provider": "openai",
+      "enabled": true,
+      "priority": 1,
+      "config": {
+        "key": "",
+        "model": "gpt-4o",
+        "api": "",
+        "organization": ""
+      },
+      "last_error": null,
+      "last_error_time": null,
+      "consecutive_failures": 0,
+      "max_failures": 3
+    },
+    "OpenRouter": {
+      "provider": "openrouter",
+      "enabled": true,
+      "priority": 2,
+      "config": {
+        "key": "",
+        "model": "anthropic/claude-3.5-sonnet",
+        "api": "https://openrouter.ai/api/v1"
+      },
+      "last_error": null,
+      "last_error_time": null,
+      "consecutive_failures": 0,
+      "max_failures": 3
+    }
+  },
+  "cache_duration": 300
+}

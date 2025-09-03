@@ -12,6 +12,7 @@ from openai import OpenAI
 import tiktoken
 from retry import retry
 from core.models import MODEL_DB, ModelProvider
+from core.cloud_client import CloudAIClient, CloudConfig
 
 
 class APIClient:
@@ -19,6 +20,8 @@ class APIClient:
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        self.cloud_client = CloudAIClient()
+        self.cloud_config = None
         self.setup_client()
         self.load_prompt()
         self.load_vocabulary()
@@ -48,7 +51,15 @@ class APIClient:
         api_base = self.config.get('api', '').lower()
         model_name = self.config.get('model', '').lower()
         
-        if 'openrouter' in api_base:
+        if 'huggingface' in api_base or model_name.startswith('hf-'):
+            return ModelProvider.HUGGINGFACE
+        elif 'vllm' in api_base or model_name.startswith('vllm-'):
+            return ModelProvider.VLLM
+        elif 'colab' in api_base or 'ngrok' in api_base or model_name.startswith('colab-'):
+            return ModelProvider.COLAB
+        elif 'kaggle' in api_base or model_name.startswith('kaggle-'):
+            return ModelProvider.KAGGLE
+        elif 'openrouter' in api_base:
             return ModelProvider.OPENROUTER
         elif 'anthropic' in api_base or 'claude' in model_name:
             return ModelProvider.ANTHROPIC
@@ -66,11 +77,51 @@ class APIClient:
             return ModelProvider.OPENAI
     
     def setup_client(self):
-        """Setup the OpenAI client"""
+        """Setup the client based on provider"""
+        provider = self.detect_provider()
         api_key = self.config.get('key', '')
         api_base = self.config.get('api', '')
         organization = self.config.get('organization', '')
+        model_name = self.config.get('model', '')
         
+        if provider in [ModelProvider.HUGGINGFACE, ModelProvider.VLLM, 
+                       ModelProvider.COLAB, ModelProvider.KAGGLE]:
+            # Setup cloud client
+            if provider == ModelProvider.HUGGINGFACE:
+                # Extract actual model name from display name
+                actual_model = model_name.replace('hf-', '').replace('-', '/')
+                if not actual_model.startswith('meta-llama/') and not actual_model.startswith('Qwen/'):
+                    # Map simplified names to full model names
+                    model_mapping = {
+                        'llama3-8b': 'meta-llama/Meta-Llama-3-8B-Instruct',
+                        'llama3-70b': 'meta-llama/Meta-Llama-3-70B-Instruct',
+                        'qwen2-7b': 'Qwen/Qwen2-7B-Instruct'
+                    }
+                    actual_model = model_mapping.get(actual_model, actual_model)
+                
+                self.cloud_config = self.cloud_client.create_huggingface_client(
+                    model_name=actual_model,
+                    api_key=api_key
+                )
+            elif provider == ModelProvider.VLLM:
+                self.cloud_config = self.cloud_client.create_vllm_client(
+                    endpoint_url=api_base or "http://localhost:8000",
+                    model_name=model_name
+                )
+            elif provider == ModelProvider.COLAB:
+                self.cloud_config = self.cloud_client.create_colab_client(
+                    ngrok_url=api_base,
+                    model_name=model_name
+                )
+            elif provider == ModelProvider.KAGGLE:
+                self.cloud_config = self.cloud_client.create_kaggle_client(
+                    endpoint_url=api_base,
+                    api_key=api_key,
+                    model_name=model_name
+                )
+            return
+        
+        # Standard OpenAI-compatible setup
         if not api_key:
             raise ValueError("API key is required")
         
@@ -132,6 +183,10 @@ You will be translating erotic and sexual content. I will provide you with lines
         """Translate a batch of texts"""
         if not text_batch:
             return {}
+        
+        # Check if using cloud services
+        if self.cloud_config:
+            return self._translate_batch_cloud(text_batch)
         
         # Check for OpenRouter free tier rate limits
         self.check_openrouter_limits()
@@ -273,6 +328,33 @@ You will be translating erotic and sexual content. I will provide you with lines
         
         return headers
     
+    def _translate_batch_cloud(self, text_batch: Dict[str, str]) -> Dict[str, str]:
+        """Translate batch using cloud services"""
+        if not self.cloud_config:
+            raise ValueError("Cloud configuration not set")
+        
+        results = {}
+        
+        # For cloud services, translate each item individually
+        for key, text in text_batch.items():
+            try:
+                translated = self.cloud_client.translate_text(
+                    config=self.cloud_config,
+                    text=text,
+                    prompt=self.prompt,
+                    vocabulary=self.vocabulary
+                )
+                results[key] = translated
+                
+                # Add small delay between requests
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"Failed to translate '{key}': {e}")
+                results[key] = text  # Fallback to original text
+        
+        return results
+    
     def check_openrouter_limits(self):
         """Check and handle OpenRouter rate limits for free tier models"""
         model_name = self.config.get('model', '')
@@ -291,7 +373,15 @@ You will be translating erotic and sexual content. I will provide you with lines
     def test_connection(self) -> tuple[bool, str]:
         """Test API connection"""
         try:
-            # Simple test request
+            if self.cloud_config:
+                # Test cloud connection
+                success = self.cloud_client.test_connection(self.cloud_config)
+                if success:
+                    return True, f"Cloud API connection successful ({self.cloud_config.provider})"
+                else:
+                    return False, f"Cloud API connection failed ({self.cloud_config.provider})"
+            
+            # Simple test request for standard APIs
             test_batch = {"test": "Hello"}
             result = self.translate_batch(test_batch)
             

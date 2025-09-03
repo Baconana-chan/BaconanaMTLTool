@@ -16,7 +16,18 @@ class ModelProvider(Enum):
     DEEPSEEK = "deepseek"
     OPENROUTER = "openrouter"
     OLLAMA = "ollama"
+    HUGGINGFACE = "huggingface"
+    VLLM = "vllm"
+    COLAB = "colab"
+    KAGGLE = "kaggle"
     CUSTOM = "custom"
+
+
+class ContentPolicy(Enum):
+    """Content moderation policy for models"""
+    SFW = "sfw"  # Safe for work - strict content filtering
+    NSFW = "nsfw"  # Not safe for work - relaxed content filtering
+    DEVELOPER_RESPONSIBILITY = "dev_responsibility"  # No filtering, developer responsibility
 
 
 @dataclass
@@ -45,6 +56,8 @@ class ModelInfo:
     supports_cache: bool = False
     supports_system_prompt: bool = True
     recommended_for_translation: bool = True
+    content_policy: ContentPolicy = ContentPolicy.SFW
+    eroge_support: bool = False  # Explicitly supports erotic content
 
 
 class ModelDatabase:
@@ -57,7 +70,7 @@ class ModelDatabase:
         """Initialize the model database"""
         models = {}
         
-        # OpenAI Models
+        # OpenAI Models - Partial filtering
         models["gpt-4"] = ModelInfo(
             name="gpt-4",
             display_name="GPT-4 (0613)",
@@ -65,7 +78,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=30.0, output_cost=60.0),
             context_length=8192,
             description="OpenAI's flagship model for complex tasks",
-            api_name="gpt-4-0613"
+            api_name="gpt-4-0613",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["gpt-3.5-turbo"] = ModelInfo(
@@ -75,7 +90,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=0.5, output_cost=1.5),
             context_length=16384,
             description="Fast and efficient for most tasks",
-            api_name="gpt-3.5-turbo-0125"
+            api_name="gpt-3.5-turbo-0125",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["gpt-4-turbo"] = ModelInfo(
@@ -85,7 +102,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=10.0, output_cost=30.0),
             context_length=128000,
             description="Latest GPT-4 with extended context",
-            api_name="gpt-4-turbo-2024-04-09"
+            api_name="gpt-4-turbo-2024-04-09",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["gpt-4o"] = ModelInfo(
@@ -100,7 +119,9 @@ class ModelDatabase:
             context_length=128000,
             description="Multimodal flagship model",
             api_name="gpt-4o-2024-11-20",
-            supports_cache=True
+            supports_cache=True,
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["o1"] = ModelInfo(
@@ -110,7 +131,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=15.0, output_cost=60.0),
             context_length=200000,
             description="Advanced reasoning model",
-            api_name="o1-2024-12-17"
+            api_name="o1-2024-12-17",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["o3-mini"] = ModelInfo(
@@ -120,7 +143,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=1.1, output_cost=4.4),
             context_length=128000,
             description="Compact reasoning model",
-            api_name="o3-mini-2025-01-31"
+            api_name="o3-mini-2025-01-31",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["gpt-4.1"] = ModelInfo(
@@ -130,7 +155,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=2.0, output_cost=8.0),
             context_length=200000,
             description="Enhanced GPT-4 with improved capabilities",
-            api_name="gpt-4.1-2025-04-14"
+            api_name="gpt-4.1-2025-04-14",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["gpt-4.1-mini"] = ModelInfo(
@@ -140,7 +167,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=0.4, output_cost=1.6),
             context_length=128000,
             description="Efficient version of GPT-4.1",
-            api_name="gpt-4.1-mini-2025-04-14"
+            api_name="gpt-4.1-mini-2025-04-14",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["o4-mini"] = ModelInfo(
@@ -150,7 +179,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=1.1, output_cost=4.4),
             context_length=200000,
             description="Next-gen compact reasoning model",
-            api_name="o4-mini-2025-04-16"
+            api_name="o4-mini-2025-04-16",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["o3"] = ModelInfo(
@@ -160,7 +191,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=2.0, output_cost=8.0),
             context_length=200000,
             description="Advanced reasoning model",
-            api_name="o3-2025-04-16"
+            api_name="o3-2025-04-16",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["gpt-5-mini"] = ModelInfo(
@@ -183,7 +216,7 @@ class ModelDatabase:
             api_name="gpt-5-2025-08-07"
         )
         
-        # Anthropic Models
+        # Anthropic Models - Strict filtering
         models["claude-haiku-3"] = ModelInfo(
             name="claude-haiku-3",
             display_name="Claude 3 Haiku",
@@ -197,7 +230,9 @@ class ModelDatabase:
             context_length=200000,
             description="Fast and efficient model for simple tasks",
             api_name="claude-3-haiku-20240307",
-            supports_cache=True
+            supports_cache=True,
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["claude-haiku-3.5"] = ModelInfo(
@@ -213,7 +248,9 @@ class ModelDatabase:
             context_length=200000,
             description="Improved Haiku with better capabilities",
             api_name="claude-3-5-haiku-20241022",
-            supports_cache=True
+            supports_cache=True,
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["claude-sonnet-3.7"] = ModelInfo(
@@ -229,7 +266,9 @@ class ModelDatabase:
             context_length=200000,
             description="Balanced performance and capability",
             api_name="claude-3-7-sonnet",
-            supports_cache=True
+            supports_cache=True,
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["claude-sonnet-4"] = ModelInfo(
@@ -245,7 +284,9 @@ class ModelDatabase:
             context_length=200000,
             description="Next-gen balanced model",
             api_name="claude-4-sonnet",
-            supports_cache=True
+            supports_cache=True,
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["claude-opus-4"] = ModelInfo(
@@ -261,7 +302,9 @@ class ModelDatabase:
             context_length=200000,
             description="Most capable Anthropic model",
             api_name="claude-4-opus",
-            supports_cache=True
+            supports_cache=True,
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["claude-opus-4.1"] = ModelInfo(
@@ -277,10 +320,12 @@ class ModelDatabase:
             context_length=200000,
             description="Enhanced Claude Opus",
             api_name="claude-4-1-opus",
-            supports_cache=True
+            supports_cache=True,
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
-        # Google Models
+        # Google Models - Strict filtering
         models["gemini-2.5-flash"] = ModelInfo(
             name="gemini-2.5-flash",
             display_name="Gemini 2.5 Flash",
@@ -288,7 +333,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=0.30, output_cost=2.5),
             context_length=1000000,
             description="Fast multimodal model",
-            api_name="gemini-2.5-flash"
+            api_name="gemini-2.5-flash",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
         models["gemini-2.5-pro"] = ModelInfo(
@@ -304,10 +351,12 @@ class ModelDatabase:
             ),
             context_length=2000000,
             description="Advanced multimodal model",
-            api_name="gemini-2.5-pro"
+            api_name="gemini-2.5-pro",
+            content_policy=ContentPolicy.SFW,
+            eroge_support=False
         )
         
-        # xAI Models
+        # xAI Models - Minimal filtering
         models["grok-3-mini"] = ModelInfo(
             name="grok-3-mini",
             display_name="Grok 3 Mini",
@@ -315,7 +364,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=0.30, output_cost=0.50),
             context_length=128000,
             description="Compact model from xAI",
-            api_name="grok-3-mini"
+            api_name="grok-3-mini",
+            content_policy=ContentPolicy.NSFW,
+            eroge_support=True
         )
         
         models["grok-3"] = ModelInfo(
@@ -325,7 +376,9 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=3.0, output_cost=15.0),
             context_length=128000,
             description="Advanced model from xAI",
-            api_name="grok-3"
+            api_name="grok-3",
+            content_policy=ContentPolicy.NSFW,
+            eroge_support=True
         )
         
         models["grok-4"] = ModelInfo(
@@ -335,10 +388,12 @@ class ModelDatabase:
             pricing=ModelPricing(input_cost=3.0, output_cost=15.0),
             context_length=200000,
             description="Latest model from xAI",
-            api_name="grok-4"
+            api_name="grok-4",
+            content_policy=ContentPolicy.NSFW,
+            eroge_support=True
         )
         
-        # DeepSeek Models
+        # DeepSeek Models - No filtering
         models["deepseek-v3.1"] = ModelInfo(
             name="deepseek-v3.1",
             display_name="DeepSeek V3.1",
@@ -351,7 +406,123 @@ class ModelDatabase:
             context_length=128000,
             description="Advanced reasoning model from DeepSeek",
             api_name="deepseek-v3.1",
-            supports_cache=True
+            supports_cache=True,
+            content_policy=ContentPolicy.NSFW,
+            eroge_support=True
+        )
+        
+        # OpenRouter Models - Developer responsibility
+        models["openrouter-auto"] = ModelInfo(
+            name="openrouter-auto",
+            display_name="OpenRouter Auto",
+            provider=ModelProvider.OPENROUTER,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Variable pricing
+            context_length=200000,
+            description="Auto-select best model (Developer responsibility for content policy)",
+            api_name="openrouter/auto",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True
+        )
+        
+        # Ollama Models - Local models
+        models["ollama-local"] = ModelInfo(
+            name="ollama-local",
+            display_name="Ollama (Local)",
+            provider=ModelProvider.OLLAMA,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Free local
+            context_length=128000,
+            description="Local self-hosted models (Developer responsibility)",
+            api_name="ollama",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True
+        )
+        
+        # Hugging Face Models - Transformers
+        models["hf-llama3-8b"] = ModelInfo(
+            name="hf-llama3-8b",
+            display_name="Llama 3 8B (Hugging Face)",
+            provider=ModelProvider.HUGGINGFACE,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Free with own compute
+            context_length=8192,
+            description="Meta's Llama 3 8B via Hugging Face Transformers",
+            api_name="meta-llama/Meta-Llama-3-8B-Instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True
+        )
+        
+        models["hf-llama3-70b"] = ModelInfo(
+            name="hf-llama3-70b",
+            display_name="Llama 3 70B (Hugging Face)",
+            provider=ModelProvider.HUGGINGFACE,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Free with own compute
+            context_length=8192,
+            description="Meta's Llama 3 70B via Hugging Face Transformers",
+            api_name="meta-llama/Meta-Llama-3-70B-Instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True
+        )
+        
+        models["hf-qwen2-7b"] = ModelInfo(
+            name="hf-qwen2-7b",
+            display_name="Qwen2 7B (Hugging Face)",
+            provider=ModelProvider.HUGGINGFACE,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Free with own compute
+            context_length=32768,
+            description="Alibaba's Qwen2 7B via Hugging Face Transformers",
+            api_name="Qwen/Qwen2-7B-Instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True
+        )
+        
+        # vLLM Models - High performance inference
+        models["vllm-llama3-8b"] = ModelInfo(
+            name="vllm-llama3-8b",
+            display_name="Llama 3 8B (vLLM)",
+            provider=ModelProvider.VLLM,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Free with own compute
+            context_length=8192,
+            description="High-performance Llama 3 8B inference via vLLM",
+            api_name="meta-llama/Meta-Llama-3-8B-Instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True
+        )
+        
+        models["vllm-qwen2-7b"] = ModelInfo(
+            name="vllm-qwen2-7b",
+            display_name="Qwen2 7B (vLLM)",
+            provider=ModelProvider.VLLM,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Free with own compute
+            context_length=32768,
+            description="High-performance Qwen2 7B inference via vLLM",
+            api_name="Qwen/Qwen2-7B-Instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True
+        )
+        
+        # Google Colab Models - Cloud hosting
+        models["colab-hosted"] = ModelInfo(
+            name="colab-hosted",
+            display_name="Google Colab Hosted Model",
+            provider=ModelProvider.COLAB,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Free with Colab compute
+            context_length=32768,
+            description="Model hosted on Google Colab with remote API access",
+            api_name="colab-custom",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True
+        )
+        
+        # Kaggle Models - Cloud hosting
+        models["kaggle-hosted"] = ModelInfo(
+            name="kaggle-hosted",
+            display_name="Kaggle Hosted Model",
+            provider=ModelProvider.KAGGLE,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Free with Kaggle compute
+            context_length=32768,
+            description="Model hosted on Kaggle with remote API access",
+            api_name="kaggle-custom",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True
         )
         
         return models
@@ -367,6 +538,37 @@ class ModelDatabase:
     def get_recommended_models(self) -> List[ModelInfo]:
         """Get models recommended for translation"""
         return [model for model in self.models.values() if model.recommended_for_translation]
+    
+    def get_eroge_compatible_models(self) -> List[ModelInfo]:
+        """Get models that support erotic content translation"""
+        return [model for model in self.models.values() if model.eroge_support]
+    
+    def get_models_by_content_policy(self, policy: ContentPolicy) -> List[ModelInfo]:
+        """Get models by content policy"""
+        return [model for model in self.models.values() if model.content_policy == policy]
+    
+    def get_sfw_models(self) -> List[ModelInfo]:
+        """Get safe-for-work models only"""
+        return self.get_models_by_content_policy(ContentPolicy.SFW)
+    
+    def get_nsfw_models(self) -> List[ModelInfo]:
+        """Get models that handle NSFW content"""
+        return [model for model in self.models.values() 
+                if model.content_policy in [ContentPolicy.NSFW, ContentPolicy.DEVELOPER_RESPONSIBILITY]]
+    
+    def get_model_content_warning(self, model_name: str) -> str:
+        """Get content policy warning for a model"""
+        model = self.get_model(model_name)
+        if not model:
+            return "Unknown model"
+        
+        if model.content_policy == ContentPolicy.SFW:
+            return "⚠️ This model has strict content filtering and may not work well with erotic content"
+        elif model.content_policy == ContentPolicy.NSFW:
+            return "✅ This model handles mature content with minimal filtering"
+        elif model.content_policy == ContentPolicy.DEVELOPER_RESPONSIBILITY:
+            return "🔓 No content filtering - developer responsibility for appropriate use"
+        return ""
     
     def get_all_models(self) -> List[ModelInfo]:
         """Get all available models"""
