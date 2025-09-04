@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QTextEdit, QTextBrowser, QFileDialog, QProgressBar, QSpinBox,
                              QComboBox, QCheckBox, QGroupBox, QGridLayout,
                              QMessageBox, QScrollArea, QFrame, QDoubleSpinBox,
-                             QInputDialog, QDialog, QApplication, QDesktopWidget)
+                             QInputDialog, QDialog, QApplication, QDesktopWidget, QListWidget)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 
@@ -35,8 +35,8 @@ class MainWindow(QMainWindow):
         
     def setup_ui(self):
         """Setup the user interface"""
-        self.setWindowTitle("BaconanaMTL Tool v1.1")
-        
+        self.setWindowTitle("BaconanaMTL Tool v1.2")
+
         # Get screen geometry
         screen = QApplication.desktop().screenGeometry()
         
@@ -69,6 +69,9 @@ class MainWindow(QMainWindow):
         self.setup_config_tab(tab_widget)
         self.setup_translation_tab(tab_widget)
         self.setup_lightnovel_tab(tab_widget)
+        self.setup_audio_tab(tab_widget)
+        self.setup_character_tab(tab_widget)
+        self.setup_novel_writing_tab(tab_widget)
         self.setup_cloud_tab(tab_widget)
         self.setup_providers_tab(tab_widget)
         self.setup_advanced_tab(tab_widget)
@@ -698,6 +701,831 @@ class MainWindow(QMainWindow):
         self.model_combo.currentTextChanged.connect(self.update_model_recommendations)
         
         tab_widget.addTab(ln_widget, "📚 Light Novel")
+    
+    def setup_audio_tab(self, tab_widget):
+        """Setup audio transcription and subtitles tab"""
+        audio_widget = QWidget()
+        layout = QVBoxLayout(audio_widget)
+        
+        # Scroll area
+        scroll = QScrollArea()
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        
+        # Audio File Selection Group
+        file_group = QGroupBox("🎵 Audio File Selection")
+        file_layout = QGridLayout(file_group)
+        
+        file_layout.addWidget(QLabel("Audio File:"), 0, 0)
+        self.audio_file_edit = QLineEdit()
+        self.audio_file_edit.setPlaceholderText("Select audio or video file...")
+        file_layout.addWidget(self.audio_file_edit, 0, 1)
+        
+        self.audio_browse_btn = QPushButton("Browse")
+        self.audio_browse_btn.clicked.connect(self.browse_audio_file)
+        file_layout.addWidget(self.audio_browse_btn, 0, 2)
+        
+        # Audio info display
+        self.audio_info_label = QLabel("No file selected")
+        self.audio_info_label.setStyleSheet("color: gray; font-style: italic;")
+        file_layout.addWidget(self.audio_info_label, 1, 0, 1, 3)
+        
+        scroll_layout.addWidget(file_group)
+        
+        # Transcription Provider Group
+        provider_group = QGroupBox("🤖 Transcription Provider")
+        provider_layout = QGridLayout(provider_group)
+        
+        provider_layout.addWidget(QLabel("Provider:"), 0, 0)
+        self.audio_provider_combo = QComboBox()
+        self.audio_provider_combo.addItems([
+            "OpenAI Whisper ($0.006/min)",
+            "Groq Whisper V3 Large ($0.111/hr)",
+            "Groq Whisper Large V3 Turbo ($0.04/hr)",
+            "AssemblyAI Universal-2 ($0.12/hr)",
+            "Nova-1 ($0.0043/min)",
+            "Nova-2 ($0.0043/min)",
+            "Nova-3 Multilingual ($0.0052/min)",
+            "Nova-3 Monolingual ($0.0043/min)",
+            "Speechmatics ($0.30/hr)",
+            "Gladia ($0.612/hr)",
+            "Azure AI Speech Batch ($0.18/hr)",
+            "Azure AI Speech Realtime ($1.0/hr)",
+            "---Local Models---",
+            "Faster-Whisper Tiny (Free)",
+            "Faster-Whisper Base (Free)",
+            "Faster-Whisper Small (Free)",
+            "Faster-Whisper Medium (Free)",
+            "Faster-Whisper Large-V1 (Free)",
+            "Faster-Whisper Large-V2 (Free)"
+        ])
+        self.audio_provider_combo.currentTextChanged.connect(self.update_transcription_cost)
+        provider_layout.addWidget(self.audio_provider_combo, 0, 1)
+        
+        # Cost estimation
+        self.cost_label = QLabel("Estimated cost: $0.00")
+        self.cost_label.setStyleSheet("font-weight: bold; color: green;")
+        provider_layout.addWidget(self.cost_label, 1, 0, 1, 2)
+        
+        scroll_layout.addWidget(provider_group)
+        
+        # Local Model Management Group
+        local_model_group = QGroupBox("💾 Local Model Management")
+        local_layout = QVBoxLayout(local_model_group)
+        
+        # Installed models list
+        installed_label = QLabel("Installed Models:")
+        local_layout.addWidget(installed_label)
+        
+        self.installed_models_list = QTextEdit()
+        self.installed_models_list.setMaximumHeight(80)
+        self.installed_models_list.setReadOnly(True)
+        local_layout.addWidget(self.installed_models_list)
+        
+        # Model download section
+        download_layout = QHBoxLayout()
+        
+        download_layout.addWidget(QLabel("Download Model:"))
+        self.model_download_combo = QComboBox()
+        self.model_download_combo.addItems([
+            "tiny (39 MB)",
+            "base (74 MB)", 
+            "small (244 MB)",
+            "medium (769 MB)",
+            "large-v1 (1550 MB)",
+            "large-v2 (1550 MB)"
+        ])
+        download_layout.addWidget(self.model_download_combo)
+        
+        self.download_model_btn = QPushButton("Download")
+        self.download_model_btn.clicked.connect(self.download_model)
+        download_layout.addWidget(self.download_model_btn)
+        
+        self.delete_model_btn = QPushButton("Delete")
+        self.delete_model_btn.clicked.connect(self.delete_model)
+        download_layout.addWidget(self.delete_model_btn)
+        
+        local_layout.addLayout(download_layout)
+        
+        # Download progress
+        self.model_progress = QProgressBar()
+        self.model_progress.setVisible(False)
+        local_layout.addWidget(self.model_progress)
+        
+        self.model_status_label = QLabel("")
+        local_layout.addWidget(self.model_status_label)
+        
+        scroll_layout.addWidget(local_model_group)
+        
+        # Transcription Options Group
+        options_group = QGroupBox("⚙️ Transcription Options")
+        options_layout = QGridLayout(options_group)
+        
+        options_layout.addWidget(QLabel("Language:"), 0, 0)
+        self.audio_language_combo = QComboBox()
+        self.audio_language_combo.addItems([
+            "Auto-detect",
+            "English", "Japanese", "Chinese", "Korean", "Spanish", 
+            "French", "German", "Russian", "Italian", "Portuguese"
+        ])
+        options_layout.addWidget(self.audio_language_combo, 0, 1)
+        
+        self.audio_translate_check = QCheckBox("Translate to target language after transcription")
+        options_layout.addWidget(self.audio_translate_check, 1, 0, 1, 2)
+        
+        scroll_layout.addWidget(options_group)
+        
+        # Local Model Settings Group (only visible when using faster-whisper)
+        self.local_settings_group = QGroupBox("🔧 Local Model Settings")
+        local_settings_layout = QGridLayout(self.local_settings_group)
+        
+        # Compute Type
+        local_settings_layout.addWidget(QLabel("Compute Type:"), 0, 0)
+        self.compute_type_combo = QComboBox()
+        self.compute_type_combo.addItems(["auto", "float32", "float16", "int8"])
+        self.compute_type_combo.setCurrentText("auto")
+        self.compute_type_combo.setToolTip("Choose compute precision. float32 is most compatible but slower.")
+        local_settings_layout.addWidget(self.compute_type_combo, 0, 1)
+        
+        # Device
+        local_settings_layout.addWidget(QLabel("Device:"), 0, 2)
+        self.device_combo = QComboBox()
+        self.device_combo.addItems(["cpu", "cuda", "auto"])
+        self.device_combo.setCurrentText("cpu")
+        self.device_combo.setToolTip("Processing device. CUDA requires compatible GPU.")
+        local_settings_layout.addWidget(self.device_combo, 0, 3)
+        
+        # Beam Size
+        local_settings_layout.addWidget(QLabel("Beam Size:"), 1, 0)
+        self.beam_size_spin = QSpinBox()
+        self.beam_size_spin.setRange(1, 10)
+        self.beam_size_spin.setValue(5)
+        self.beam_size_spin.setToolTip("Higher values improve accuracy but are slower.")
+        local_settings_layout.addWidget(self.beam_size_spin, 1, 1)
+        
+        # Temperature
+        local_settings_layout.addWidget(QLabel("Temperature:"), 1, 2)
+        self.temperature_spin = QDoubleSpinBox()
+        self.temperature_spin.setRange(0.0, 1.0)
+        self.temperature_spin.setValue(0.0)
+        self.temperature_spin.setSingleStep(0.1)
+        self.temperature_spin.setToolTip("Sampling temperature. 0 = deterministic, higher = more random.")
+        local_settings_layout.addWidget(self.temperature_spin, 1, 3)
+        
+        # Additional options
+        self.vad_filter_check = QCheckBox("Voice Activity Detection (VAD)")
+        self.vad_filter_check.setChecked(True)
+        self.vad_filter_check.setToolTip("Filter out non-speech segments.")
+        local_settings_layout.addWidget(self.vad_filter_check, 2, 0, 1, 2)
+        
+        self.word_timestamps_check = QCheckBox("Word-level timestamps")
+        self.word_timestamps_check.setChecked(False)
+        self.word_timestamps_check.setToolTip("Generate timestamps for individual words.")
+        local_settings_layout.addWidget(self.word_timestamps_check, 2, 2, 1, 2)
+        
+        scroll_layout.addWidget(self.local_settings_group)
+        self.local_settings_group.setVisible(False)  # Hidden by default
+        
+        # Subtitle Output Group
+        subtitle_group = QGroupBox("📝 Subtitle Output")
+        subtitle_layout = QGridLayout(subtitle_group)
+        
+        subtitle_layout.addWidget(QLabel("Output Format:"), 0, 0)
+        self.subtitle_format_combo = QComboBox()
+        self.subtitle_format_combo.addItems(["SRT", "VTT", "ASS"])
+        self.subtitle_format_combo.currentTextChanged.connect(self.on_subtitle_format_changed)
+        subtitle_layout.addWidget(self.subtitle_format_combo, 0, 1)
+        
+        # ASS Settings (hidden by default)
+        self.ass_settings_group = QGroupBox("🎨 ASS Subtitle Settings")
+        ass_settings_layout = QGridLayout(self.ass_settings_group)
+        
+        ass_settings_layout.addWidget(QLabel("Auto-detect video resolution:"), 0, 0)
+        self.auto_resolution_check = QCheckBox()
+        self.auto_resolution_check.setChecked(True)
+        self.auto_resolution_check.setToolTip("Automatically detect video resolution and adjust font size")
+        ass_settings_layout.addWidget(self.auto_resolution_check, 0, 1)
+        
+        ass_settings_layout.addWidget(QLabel("Manual font size:"), 1, 0)
+        self.manual_font_spin = QSpinBox()
+        self.manual_font_spin.setRange(8, 72)
+        self.manual_font_spin.setValue(28)
+        self.manual_font_spin.setEnabled(False)
+        self.manual_font_spin.setToolTip("Manual font size (used when auto-detection is disabled)")
+        ass_settings_layout.addWidget(self.manual_font_spin, 1, 1)
+        
+        self.auto_resolution_check.toggled.connect(lambda checked: self.manual_font_spin.setEnabled(not checked))
+        
+        subtitle_layout.addWidget(self.ass_settings_group, 0, 2, 2, 1)
+        self.ass_settings_group.setVisible(False)  # Hidden by default
+        
+        subtitle_layout.addWidget(QLabel("Output Directory:"), 1, 0)
+        self.subtitle_output_edit = QLineEdit()
+        self.subtitle_output_edit.setPlaceholderText("Select output directory...")
+        subtitle_layout.addWidget(self.subtitle_output_edit, 1, 1)
+        
+        self.subtitle_browse_btn = QPushButton("Browse")
+        self.subtitle_browse_btn.clicked.connect(self.browse_subtitle_output)
+        subtitle_layout.addWidget(self.subtitle_browse_btn, 1, 2)
+        
+        self.save_raw_check = QCheckBox("Save raw transcription text file")
+        subtitle_layout.addWidget(self.save_raw_check, 2, 0, 1, 3)
+        
+        scroll_layout.addWidget(subtitle_group)
+        
+    def on_subtitle_format_changed(self):
+        """Show/hide ASS settings based on selected format"""
+        is_ass = self.subtitle_format_combo.currentText() == "ASS"
+        self.ass_settings_group.setVisible(is_ass)
+        
+        # Action Buttons
+        action_layout = QHBoxLayout()
+        
+        self.transcribe_btn = QPushButton("🎯 Start Transcription")
+        self.transcribe_btn.clicked.connect(self.start_transcription)
+        self.transcribe_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 10px; font-weight: bold; }")
+        action_layout.addWidget(self.transcribe_btn)
+        
+        self.stop_transcription_btn = QPushButton("⏹️ Stop")
+        self.stop_transcription_btn.clicked.connect(self.stop_transcription)
+        self.stop_transcription_btn.setEnabled(False)
+        action_layout.addWidget(self.stop_transcription_btn)
+        
+        scroll_layout.addLayout(action_layout)
+        
+        # Progress and Status
+        progress_group = QGroupBox("📊 Progress")
+        progress_layout = QVBoxLayout(progress_group)
+        
+        self.transcription_progress = QProgressBar()
+        progress_layout.addWidget(self.transcription_progress)
+        
+        self.transcription_status = QLabel("Ready to transcribe")
+        progress_layout.addWidget(self.transcription_status)
+        
+        # Time estimation label
+        self.transcription_time_label = QLabel("")
+        self.transcription_time_label.setStyleSheet("color: #666; font-style: italic;")
+        progress_layout.addWidget(self.transcription_time_label)
+        
+        scroll_layout.addWidget(progress_group)
+        
+        # Preview Group
+        preview_group = QGroupBox("👁️ Transcription Preview")
+        preview_layout = QVBoxLayout(preview_group)
+        
+        self.transcription_preview = QTextEdit()
+        self.transcription_preview.setPlaceholderText("Transcription results will appear here...")
+        self.transcription_preview.setMaximumHeight(200)
+        preview_layout.addWidget(self.transcription_preview)
+        
+        scroll_layout.addWidget(preview_group)
+        
+        scroll.setWidget(scroll_widget)
+        scroll.setWidgetResizable(True)
+        layout.addWidget(scroll)
+        
+        # Initialize audio processor
+        self.audio_processor = None
+        self.update_installed_models()
+        
+        tab_widget.addTab(audio_widget, "🎵 Audio & Subtitles")
+    
+    def setup_character_tab(self, tab_widget):
+        """Setup character generator tab"""
+        char_widget = QWidget()
+        layout = QVBoxLayout(char_widget)
+        
+        # Header
+        header_label = QLabel("👥 Character Generator")
+        header_label.setFont(QFont("Arial", 16, QFont.Bold))
+        header_label.setStyleSheet("color: #9C27B0; margin: 10px 0px;")
+        layout.addWidget(header_label)
+        
+        # Description
+        desc_label = QLabel("Create detailed characters for your stories with AI assistance. Choose style and customize attributes.")
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #666; margin-bottom: 15px;")
+        layout.addWidget(desc_label)
+        
+        # Create scroll area
+        scroll = QScrollArea()
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        
+        # Character Style Group
+        style_group = QGroupBox("🎨 Character Style")
+        style_layout = QGridLayout(style_group)
+        
+        style_layout.addWidget(QLabel("Style:"), 0, 0)
+        self.char_style_combo = QComboBox()
+        self.char_style_combo.addItems(["Japanese", "Korean", "Chinese", "Fantasy", "Western"])
+        self.char_style_combo.currentTextChanged.connect(self.update_style_preview)
+        style_layout.addWidget(self.char_style_combo, 0, 1)
+        
+        # Style preview
+        self.style_preview_label = QLabel()
+        self.style_preview_label.setWordWrap(True)
+        self.style_preview_label.setStyleSheet("background: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0px;")
+        style_layout.addWidget(self.style_preview_label, 1, 0, 1, 2)
+        
+        scroll_layout.addWidget(style_group)
+        
+        # Character Requirements Group
+        req_group = QGroupBox("📋 Character Requirements")
+        req_layout = QGridLayout(req_group)
+        
+        # Basic fields
+        req_layout.addWidget(QLabel("Age Range:"), 0, 0)
+        self.char_age_edit = QLineEdit()
+        self.char_age_edit.setPlaceholderText("e.g., 16-18, young adult, elderly")
+        req_layout.addWidget(self.char_age_edit, 0, 1)
+        
+        req_layout.addWidget(QLabel("Gender:"), 0, 2)
+        self.char_gender_combo = QComboBox()
+        self.char_gender_combo.addItems(["Any", "Female", "Male", "Non-binary"])
+        req_layout.addWidget(self.char_gender_combo, 0, 3)
+        
+        req_layout.addWidget(QLabel("Occupation:"), 1, 0)
+        self.char_occupation_edit = QLineEdit()
+        self.char_occupation_edit.setPlaceholderText("e.g., student, warrior, merchant")
+        req_layout.addWidget(self.char_occupation_edit, 1, 1)
+        
+        req_layout.addWidget(QLabel("Personality Traits:"), 1, 2)
+        self.char_personality_edit = QLineEdit()
+        self.char_personality_edit.setPlaceholderText("e.g., cheerful, mysterious, brave")
+        req_layout.addWidget(self.char_personality_edit, 1, 3)
+        
+        # Custom fields
+        custom_label = QLabel("Custom Requirements:")
+        custom_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        req_layout.addWidget(custom_label, 2, 0, 1, 4)
+        
+        self.char_custom_edit = QTextEdit()
+        self.char_custom_edit.setPlaceholderText("Describe any specific requirements for this character...")
+        self.char_custom_edit.setMaximumHeight(80)
+        req_layout.addWidget(self.char_custom_edit, 3, 0, 1, 4)
+        
+        scroll_layout.addWidget(req_group)
+        
+        # Generated Character Display
+        char_display_group = QGroupBox("🎭 Generated Character")
+        char_display_layout = QVBoxLayout(char_display_group)
+        
+        # Character name and basic info
+        char_info_layout = QHBoxLayout()
+        
+        char_info_layout.addWidget(QLabel("Name:"))
+        self.char_name_display = QLineEdit()
+        self.char_name_display.setReadOnly(True)
+        char_info_layout.addWidget(self.char_name_display)
+        
+        self.generate_char_btn = QPushButton("🎲 Generate Character")
+        self.generate_char_btn.clicked.connect(self.generate_character)
+        self.generate_char_btn.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; padding: 10px; font-weight: bold; }")
+        char_info_layout.addWidget(self.generate_char_btn)
+        
+        char_display_layout.addLayout(char_info_layout)
+        
+        # Character details tabs
+        self.char_details_tabs = QTabWidget()
+        
+        # Personality tab
+        personality_widget = QWidget()
+        personality_layout = QVBoxLayout(personality_widget)
+        self.char_personality_display = QTextEdit()
+        self.char_personality_display.setReadOnly(True)
+        personality_layout.addWidget(self.char_personality_display)
+        self.char_details_tabs.addTab(personality_widget, "Personality")
+        
+        # Appearance tab
+        appearance_widget = QWidget()
+        appearance_layout = QVBoxLayout(appearance_widget)
+        self.char_appearance_display = QTextEdit()
+        self.char_appearance_display.setReadOnly(True)
+        appearance_layout.addWidget(self.char_appearance_display)
+        self.char_details_tabs.addTab(appearance_widget, "Appearance")
+        
+        # Background tab
+        background_widget = QWidget()
+        background_layout = QVBoxLayout(background_widget)
+        self.char_background_display = QTextEdit()
+        self.char_background_display.setReadOnly(True)
+        background_layout.addWidget(self.char_background_display)
+        self.char_details_tabs.addTab(background_widget, "Background")
+        
+        # Custom fields tab
+        custom_widget = QWidget()
+        custom_layout = QVBoxLayout(custom_widget)
+        self.char_custom_display = QTextEdit()
+        self.char_custom_display.setReadOnly(True)
+        custom_layout.addWidget(self.char_custom_display)
+        self.char_details_tabs.addTab(custom_widget, "Other Details")
+        
+        char_display_layout.addWidget(self.char_details_tabs)
+        
+        scroll_layout.addWidget(char_display_group)
+        
+        # Character Management Group
+        char_mgmt_group = QGroupBox("💾 Character Management")
+        char_mgmt_layout = QVBoxLayout(char_mgmt_group)
+        
+        # Save/Load buttons
+        mgmt_buttons_layout = QHBoxLayout()
+        
+        self.save_char_btn = QPushButton("💾 Save Character")
+        self.save_char_btn.clicked.connect(self.save_character)
+        self.save_char_btn.setEnabled(False)
+        mgmt_buttons_layout.addWidget(self.save_char_btn)
+        
+        self.load_char_btn = QPushButton("📂 Load Character")
+        self.load_char_btn.clicked.connect(self.load_character)
+        mgmt_buttons_layout.addWidget(self.load_char_btn)
+        
+        self.new_char_btn = QPushButton("🆕 New Character")
+        self.new_char_btn.clicked.connect(self.new_character)
+        mgmt_buttons_layout.addWidget(self.new_char_btn)
+        
+        char_mgmt_layout.addLayout(mgmt_buttons_layout)
+        
+        # Saved characters list
+        self.saved_chars_list = QListWidget()
+        self.saved_chars_list.setMaximumHeight(120)
+        self.saved_chars_list.itemDoubleClicked.connect(self.load_selected_character)
+        char_mgmt_layout.addWidget(QLabel("Saved Characters:"))
+        char_mgmt_layout.addWidget(self.saved_chars_list)
+        
+        scroll_layout.addWidget(char_mgmt_group)
+        
+        scroll.setWidget(scroll_widget)
+        scroll.setWidgetResizable(True)
+        layout.addWidget(scroll)
+        
+        # Initialize character system
+        self.novel_db = None
+        self.novel_assistant = None
+        self.current_character = None
+        self.update_style_preview()
+        self.refresh_saved_characters()
+        
+        tab_widget.addTab(char_widget, "👥 Character Generator")
+    
+    def setup_novel_writing_tab(self, tab_widget):
+        """Setup novel writing tab"""
+        novel_widget = QWidget()
+        layout = QVBoxLayout(novel_widget)
+        
+        # Header
+        header_label = QLabel("📝 Novel Writing Assistant")
+        header_label.setFont(QFont("Arial", 16, QFont.Bold))
+        header_label.setStyleSheet("color: #FF5722; margin: 10px 0px;")
+        layout.addWidget(header_label)
+        
+        # Description
+        desc_label = QLabel("Write novels, stories, and scripts with AI assistance. Maintain context and character consistency.")
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #666; margin-bottom: 15px;")
+        layout.addWidget(desc_label)
+        
+        # Create main horizontal layout
+        main_layout = QHBoxLayout()
+        
+        # Left side - Project and context
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_widget.setMaximumWidth(350)
+        
+        # Project Management
+        project_group = QGroupBox("📚 Project")
+        project_layout = QVBoxLayout(project_group)
+        
+        # Project selection
+        project_select_layout = QHBoxLayout()
+        self.novel_project_combo = QComboBox()
+        self.novel_project_combo.currentTextChanged.connect(self.load_novel_project)
+        project_select_layout.addWidget(self.novel_project_combo)
+        
+        self.new_project_btn = QPushButton("➕")
+        self.new_project_btn.setMaximumWidth(30)
+        self.new_project_btn.clicked.connect(self.create_new_project)
+        project_select_layout.addWidget(self.new_project_btn)
+        
+        project_layout.addLayout(project_select_layout)
+        
+        # Project info
+        self.project_info_label = QLabel("No project selected")
+        self.project_info_label.setWordWrap(True)
+        self.project_info_label.setStyleSheet("background: #f5f5f5; padding: 8px; border-radius: 4px;")
+        project_layout.addWidget(self.project_info_label)
+        
+        left_layout.addWidget(project_group)
+        
+        # Context Management
+        context_group = QGroupBox("📝 Writing Context")
+        context_layout = QVBoxLayout(context_group)
+        
+        context_layout.addWidget(QLabel("Current Context:"))
+        self.novel_context_edit = QTextEdit()
+        self.novel_context_edit.setPlaceholderText("Describe the current situation, location, mood...")
+        self.novel_context_edit.setMaximumHeight(100)
+        context_layout.addWidget(self.novel_context_edit)
+        
+        context_layout.addWidget(QLabel("Key Points to Remember:"))
+        self.key_points_edit = QTextEdit()
+        self.key_points_edit.setPlaceholderText("• Important plot points\n• Character developments\n• Secrets revealed")
+        self.key_points_edit.setMaximumHeight(80)
+        context_layout.addWidget(self.key_points_edit)
+        
+        left_layout.addWidget(context_group)
+        
+        # Active Characters
+        chars_group = QGroupBox("👥 Active Characters")
+        chars_layout = QVBoxLayout(chars_group)
+        
+        self.active_chars_list = QListWidget()
+        self.active_chars_list.setMaximumHeight(100)
+        self.active_chars_list.setSelectionMode(QListWidget.MultiSelection)
+        chars_layout.addWidget(self.active_chars_list)
+        
+        chars_buttons_layout = QHBoxLayout()
+        self.add_char_btn = QPushButton("Add Character")
+        self.add_char_btn.clicked.connect(self.add_active_character)
+        chars_buttons_layout.addWidget(self.add_char_btn)
+        
+        self.remove_char_btn = QPushButton("Remove")
+        self.remove_char_btn.clicked.connect(self.remove_active_character)
+        chars_buttons_layout.addWidget(self.remove_char_btn)
+        
+        chars_layout.addLayout(chars_buttons_layout)
+        
+        left_layout.addWidget(chars_group)
+        
+        # Writing Tools
+        tools_group = QGroupBox("🛠️ Writing Tools")
+        tools_layout = QVBoxLayout(tools_group)
+        
+        tools_layout.addWidget(QLabel("Writing Mode:"))
+        self.writing_mode_combo = QComboBox()
+        self.writing_mode_combo.addItems([
+            "Continue Story",
+            "Write Scene", 
+            "Write Dialogue",
+            "Describe Character",
+            "Build World",
+            "Free Writing"
+        ])
+        tools_layout.addWidget(self.writing_mode_combo)
+        
+        self.writing_goal_edit = QLineEdit()
+        self.writing_goal_edit.setPlaceholderText("What do you want to accomplish?")
+        tools_layout.addWidget(QLabel("Goal:"))
+        tools_layout.addWidget(self.writing_goal_edit)
+        
+        self.generate_text_btn = QPushButton("✨ Generate with AI")
+        self.generate_text_btn.clicked.connect(self.generate_writing)
+        self.generate_text_btn.setStyleSheet("QPushButton { background-color: #FF5722; color: white; padding: 8px; font-weight: bold; }")
+        tools_layout.addWidget(self.generate_text_btn)
+        
+        left_layout.addWidget(tools_group)
+        
+        left_layout.addStretch()
+        main_layout.addWidget(left_widget)
+        
+        # Right side - Writing area
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        
+        # Writing area header
+        writing_header_layout = QHBoxLayout()
+        
+        self.word_count_label = QLabel("Words: 0")
+        self.word_count_label.setStyleSheet("font-weight: bold; color: #FF5722;")
+        writing_header_layout.addWidget(self.word_count_label)
+        
+        writing_header_layout.addStretch()
+        
+        self.save_writing_btn = QPushButton("💾 Save")
+        self.save_writing_btn.clicked.connect(self.save_writing)
+        writing_header_layout.addWidget(self.save_writing_btn)
+        
+        self.export_writing_btn = QPushButton("📤 Export")
+        self.export_writing_btn.clicked.connect(self.export_writing)
+        writing_header_layout.addWidget(self.export_writing_btn)
+        
+        right_layout.addLayout(writing_header_layout)
+        
+        # Main writing area
+        self.novel_text_edit = QTextEdit()
+        self.novel_text_edit.setPlaceholderText("Start writing your story here...")
+        self.novel_text_edit.textChanged.connect(self.update_word_count)
+        self.novel_text_edit.setStyleSheet("""
+            QTextEdit {
+                font-family: 'Times New Roman', serif;
+                font-size: 12pt;
+                line-height: 1.6;
+                padding: 20px;
+                background-color: #ffffff;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+            }
+        """)
+        right_layout.addWidget(self.novel_text_edit)
+        
+        main_layout.addWidget(right_widget, 2)  # Give more space to writing area
+        
+        layout.addLayout(main_layout)
+        
+        # Initialize novel system
+        self.current_project = None
+        self.current_session = None
+        self.refresh_projects()
+        
+        tab_widget.addTab(novel_widget, "📝 Novel Writing")
+        
+        # Setup Local Models tab
+        self.setup_local_models_tab(tab_widget)
+    
+    def setup_local_models_tab(self, tab_widget):
+        """Setup local models management tab"""
+        local_widget = QWidget()
+        layout = QVBoxLayout(local_widget)
+        
+        # Header
+        header_label = QLabel("🖥️ Local Models (Llama.cpp)")
+        header_label.setFont(QFont("Arial", 16, QFont.Bold))
+        header_label.setStyleSheet("color: #4CAF50; margin: 10px 0px;")
+        layout.addWidget(header_label)
+        
+        # Description
+        desc_label = QLabel("Manage local LLM models for offline translation. Models run on your device without internet connection.")
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #666; margin-bottom: 15px;")
+        layout.addWidget(desc_label)
+        
+        # Create scroll area
+        scroll = QScrollArea()
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        
+        # Model Management Group
+        model_group = QGroupBox("📦 Model Management")
+        model_layout = QVBoxLayout(model_group)
+        
+        # Available Models List
+        available_label = QLabel("Available Models:")
+        available_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        model_layout.addWidget(available_label)
+        
+        self.available_models_list = QListWidget()
+        self.available_models_list.setMaximumHeight(200)
+        model_layout.addWidget(self.available_models_list)
+        
+        # Model actions
+        model_actions_layout = QHBoxLayout()
+        
+        self.download_model_btn = QPushButton("📥 Download Selected Model")
+        self.download_model_btn.clicked.connect(self.download_selected_model)
+        self.download_model_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 8px; font-weight: bold; }")
+        model_actions_layout.addWidget(self.download_model_btn)
+        
+        self.refresh_models_btn = QPushButton("🔄 Refresh List")
+        self.refresh_models_btn.clicked.connect(self.refresh_local_models)
+        model_actions_layout.addWidget(self.refresh_models_btn)
+        
+        model_layout.addLayout(model_actions_layout)
+        
+        # Installed Models
+        installed_label = QLabel("Installed Models:")
+        installed_label.setStyleSheet("font-weight: bold; margin-top: 15px;")
+        model_layout.addWidget(installed_label)
+        
+        self.installed_models_list = QListWidget()
+        self.installed_models_list.setMaximumHeight(150)
+        model_layout.addWidget(self.installed_models_list)
+        
+        # Model info display
+        self.model_info_label = QLabel("Select a model to see details")
+        self.model_info_label.setStyleSheet("background: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0px;")
+        self.model_info_label.setWordWrap(True)
+        model_layout.addWidget(self.model_info_label)
+        
+        scroll_layout.addWidget(model_group)
+        
+        # Model Configuration Group
+        config_group = QGroupBox("⚙️ Model Configuration")
+        config_layout = QGridLayout(config_group)
+        
+        # Context Length
+        config_layout.addWidget(QLabel("Context Length:"), 0, 0)
+        self.local_ctx_spin = QSpinBox()
+        self.local_ctx_spin.setRange(512, 32768)
+        self.local_ctx_spin.setValue(4096)
+        self.local_ctx_spin.setSuffix(" tokens")
+        config_layout.addWidget(self.local_ctx_spin, 0, 1)
+        
+        # GPU Layers
+        config_layout.addWidget(QLabel("GPU Layers:"), 0, 2)
+        self.gpu_layers_spin = QSpinBox()
+        self.gpu_layers_spin.setRange(0, 100)
+        self.gpu_layers_spin.setValue(0)
+        self.gpu_layers_spin.setToolTip("Number of layers to run on GPU (0 = CPU only)")
+        config_layout.addWidget(self.gpu_layers_spin, 0, 3)
+        
+        # Threads
+        config_layout.addWidget(QLabel("CPU Threads:"), 1, 0)
+        self.threads_spin = QSpinBox()
+        self.threads_spin.setRange(-1, 64)
+        self.threads_spin.setValue(-1)
+        self.threads_spin.setSpecialValueText("Auto")
+        self.threads_spin.setToolTip("-1 for automatic detection")
+        config_layout.addWidget(self.threads_spin, 1, 1)
+        
+        # Temperature
+        config_layout.addWidget(QLabel("Temperature:"), 1, 2)
+        self.local_temp_spin = QDoubleSpinBox()
+        self.local_temp_spin.setRange(0.0, 2.0)
+        self.local_temp_spin.setValue(0.7)
+        self.local_temp_spin.setSingleStep(0.1)
+        self.local_temp_spin.setToolTip("Randomness in generation (0.0 = deterministic)")
+        config_layout.addWidget(self.local_temp_spin, 1, 3)
+        
+        scroll_layout.addWidget(config_group)
+        
+        # Model Testing Group
+        test_group = QGroupBox("🧪 Model Testing")
+        test_layout = QVBoxLayout(test_group)
+        
+        # Model selection for testing
+        test_selection_layout = QHBoxLayout()
+        test_selection_layout.addWidget(QLabel("Test Model:"))
+        self.test_model_combo = QComboBox()
+        test_selection_layout.addWidget(self.test_model_combo)
+        
+        self.load_model_btn = QPushButton("🔄 Load Model")
+        self.load_model_btn.clicked.connect(self.load_selected_model)
+        test_selection_layout.addWidget(self.load_model_btn)
+        
+        self.unload_model_btn = QPushButton("⏹️ Unload Model")
+        self.unload_model_btn.clicked.connect(self.unload_current_model)
+        self.unload_model_btn.setEnabled(False)
+        test_selection_layout.addWidget(self.unload_model_btn)
+        
+        test_layout.addLayout(test_selection_layout)
+        
+        # Test input
+        test_layout.addWidget(QLabel("Test Translation:"))
+        self.test_input = QTextEdit()
+        self.test_input.setPlaceholderText("Enter text to translate...")
+        self.test_input.setMaximumHeight(80)
+        test_layout.addWidget(self.test_input)
+        
+        # Test controls
+        test_controls_layout = QHBoxLayout()
+        
+        test_controls_layout.addWidget(QLabel("Target Language:"))
+        self.test_target_combo = QComboBox()
+        self.test_target_combo.addItems(["English", "Japanese", "Chinese", "Korean", "Spanish", "French", "German", "Russian"])
+        test_controls_layout.addWidget(self.test_target_combo)
+        
+        self.test_translate_btn = QPushButton("🔄 Test Translation")
+        self.test_translate_btn.clicked.connect(self.test_translation)
+        self.test_translate_btn.setEnabled(False)
+        test_controls_layout.addWidget(self.test_translate_btn)
+        
+        test_layout.addLayout(test_controls_layout)
+        
+        # Test output
+        self.test_output = QTextEdit()
+        self.test_output.setPlaceholderText("Translation result will appear here...")
+        self.test_output.setMaximumHeight(80)
+        self.test_output.setReadOnly(True)
+        test_layout.addWidget(self.test_output)
+        
+        scroll_layout.addWidget(test_group)
+        
+        # Status and Progress
+        status_group = QGroupBox("📊 Status")
+        status_layout = QVBoxLayout(status_group)
+        
+        self.local_status_label = QLabel("Ready")
+        self.local_status_label.setStyleSheet("font-weight: bold; color: #4CAF50;")
+        status_layout.addWidget(self.local_status_label)
+        
+        self.local_progress_bar = QProgressBar()
+        self.local_progress_bar.setVisible(False)
+        status_layout.addWidget(self.local_progress_bar)
+        
+        scroll_layout.addWidget(status_group)
+        
+        scroll.setWidget(scroll_widget)
+        scroll.setWidgetResizable(True)
+        layout.addWidget(scroll)
+        
+        # Initialize local models
+        self.llamacpp_client = None
+        self.refresh_local_models()
+        
+        tab_widget.addTab(local_widget, "🖥️ Local Models")
     
     def setup_cloud_tab(self, tab_widget):
         """Setup cloud AI services tab"""
@@ -3297,7 +4125,7 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             </div>
 
             <div class="tab-info">
-                <h3>📚 Light Novel <span class="new">NEW!</span></h3>
+                <h3>📚 Light Novel</h3>
                 <p>Specialized interface for visual novels and light novels with advanced content handling.</p>
                 <ul>
                     <li><strong>Content Detection:</strong> Automatic eroge/adult content classification</li>
@@ -3309,7 +4137,61 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             </div>
 
             <div class="tab-info">
-                <h3>☁️ Cloud AI <span class="new">NEW!</span></h3>
+                <h3>🎵 Audio & Subtitles <span class="new">NEW!</span></h3>
+                <p>Transcribe audio/video and generate subtitles with multiple providers.</p>
+                <ul>
+                    <li><strong>Cloud Providers:</strong> OpenAI Whisper, Groq, AssemblyAI, Nova, Azure</li>
+                    <li><strong>Local Processing:</strong> Faster-Whisper for offline transcription</li>
+                    <li><strong>Multiple Formats:</strong> SRT, VTT, ASS subtitle generation</li>
+                    <li><strong>Auto-sizing:</strong> Adaptive font sizes based on video resolution</li>
+                    <li><strong>Translation Integration:</strong> Direct translation after transcription</li>
+                </ul>
+            </div>
+
+            <div class="tab-info">
+                <h3>🖥️ Local Models <span class="new">NEW!</span></h3>
+                <p>Run AI models locally using llama.cpp for complete offline translation.</p>
+                <ul>
+                    <li><strong>Model Management:</strong> Download and manage Llama, Qwen, Mistral, Gemma models</li>
+                    <li><strong>Zero Cost:</strong> No API fees, unlimited local inference</li>
+                    <li><strong>Privacy:</strong> Complete data privacy, no cloud connections</li>
+                    <li><strong>GPU Acceleration:</strong> Optional CUDA support for faster inference</li>
+                    <li><strong>Configurable:</strong> Adjust context length, temperature, threads</li>
+                    <li><strong>Test Interface:</strong> Built-in translation testing</li>
+                </ul>
+            </div>
+
+            <div class="tab-info">
+                <h3>👥 Character Generator <span class="new">NEW!</span></h3>
+                <p>Create and manage detailed character profiles for your stories with AI assistance.</p>
+                <ul>
+                    <li><strong>Multi-Style Generation:</strong> Japanese, Korean, Chinese, Fantasy character styles</li>
+                    <li><strong>Comprehensive Profiles:</strong> Appearance, personality, background, relationships</li>
+                    <li><strong>Custom Fields:</strong> Add unlimited custom attributes for characters</li>
+                    <li><strong>AI-Powered Creation:</strong> Intelligent character generation with cultural context</li>
+                    <li><strong>Character Database:</strong> Save, edit, and manage character collections</li>
+                    <li><strong>Export/Import:</strong> JSON-based character data for portability</li>
+                    <li><strong>Visual Descriptions:</strong> Detailed physical appearance generation</li>
+                </ul>
+            </div>
+
+            <div class="tab-info">
+                <h3>📝 Novel Writing <span class="new">NEW!</span></h3>
+                <p>AI-assisted novel writing with context awareness and character integration.</p>
+                <ul>
+                    <li><strong>Context Memory:</strong> AI remembers plot points, character development, and story beats</li>
+                    <li><strong>Character Integration:</strong> Direct access to character database for consistency</li>
+                    <li><strong>Adaptive Prompts:</strong> Genre-specific writing prompts (Romance, Fantasy, Sci-Fi, etc.)</li>
+                    <li><strong>Chapter Management:</strong> Organize stories into chapters with individual summaries</li>
+                    <li><strong>Multiple Formats:</strong> Export to TXT, DOCX, EPUB, Markdown</li>
+                    <li><strong>Writing Styles:</strong> Choose between narrative styles and perspectives</li>
+                    <li><strong>Scene Planning:</strong> Outline and develop individual scenes</li>
+                    <li><strong>Revision Tools:</strong> AI-powered editing and improvement suggestions</li>
+                </ul>
+            </div>
+
+            <div class="tab-info">
+                <h3>☁️ Cloud AI</h3>
                 <p>Access cloud platforms and advanced AI models.</p>
                 <ul>
                     <li><strong>HuggingFace:</strong> 1000+ transformer models with manual selection</li>
@@ -3321,7 +4203,7 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             </div>
 
             <div class="tab-info">
-                <h3>🔄 Providers <span class="new">NEW!</span></h3>
+                <h3>🔄 Providers</h3>
                 <p>Advanced provider management with automatic failover.</p>
                 <ul>
                     <li><strong>Multiple Providers:</strong> Configure OpenAI, Anthropic, Gemini, xAI, DeepSeek, etc.</li>
@@ -3357,7 +4239,7 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             <h2>✨ Key Features</h2>
 
             <div class="feature">
-                <h3>🔄 Provider Management System <span class="new">NEW!</span></h3>
+                <h3>🔄 Provider Management System</h3>
                 <p>Industry-grade provider management with automatic failover ensures <span class="highlight">99.9% uptime</span> for your translations.</p>
                 <ul>
                     <li><strong>Priority-based routing:</strong> Configure which providers to use first</li>
@@ -3382,13 +4264,36 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             </div>
 
             <div class="feature">
-                <h3>📚 Light Novel Processing <span class="new">NEW!</span></h3>
+                <h3>📚 Light Novel Processing</h3>
                 <p>Advanced content-aware processing for visual novels and light novels:</p>
                 <ul>
                     <li><strong>Eroge Detection:</strong> Automatic adult content classification</li>
                     <li><strong>Model Compatibility:</strong> SFW/NSFW model filtering</li>
                     <li><strong>Smart Chunking:</strong> Sentence-boundary aware text segmentation</li>
                     <li><strong>Multiple Outputs:</strong> Text, EPUB, JSON formats</li>
+                </ul>
+            </div>
+
+            <div class="feature">
+                <h3>🎨 Creative Writing Suite <span class="new">NEW!</span></h3>
+                <p>Complete toolkit for creative writing with AI assistance:</p>
+                <ul>
+                    <li><strong>Character Generator:</strong> Create detailed characters with cultural authenticity</li>
+                    <li><strong>Novel Writing Assistant:</strong> Context-aware story development</li>
+                    <li><strong>Multi-Cultural Styles:</strong> Japanese, Korean, Chinese, Fantasy character archetypes</li>
+                    <li><strong>Smart Context Memory:</strong> AI tracks characters, plot, and story elements</li>
+                    <li><strong>Multiple Genres:</strong> Romance, Fantasy, Sci-Fi, Mystery, and more</li>
+                </ul>
+            </div>
+
+            <div class="feature">
+                <h3>🎵 Multimedia Processing <span class="new">NEW!</span></h3>
+                <p>Professional audio and video processing capabilities:</p>
+                <ul>
+                    <li><strong>Audio Transcription:</strong> Multiple cloud and local providers</li>
+                    <li><strong>Subtitle Generation:</strong> SRT, VTT, ASS formats with auto-sizing</li>
+                    <li><strong>Translation Integration:</strong> Direct translation after transcription</li>
+                    <li><strong>Local Processing:</strong> Faster-Whisper for offline transcription</li>
                 </ul>
             </div>
 
@@ -3430,6 +4335,40 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                     <li><strong>Quality vs Cost:</strong> GPT-4 for best quality, GPT-3.5 for cost efficiency</li>
                     <li><strong>Large Projects:</strong> Use Light Novel tab for books, Game Translation for games</li>
                     <li><strong>Custom Prompts:</strong> Adapt prompts for specific content types or styles</li>
+                </ul>
+            </div>
+
+            <h2>📝 Creative Writing & Character Generation</h2>
+
+            <div class="feature">
+                <h3>🎭 Character Generator Usage</h3>
+                <ul>
+                    <li><strong>Cultural Styles:</strong> Choose from Japanese, Korean, Chinese, or Fantasy character types</li>
+                    <li><strong>Custom Fields:</strong> Add any attributes you need (skills, relationships, items, etc.)</li>
+                    <li><strong>Export/Import:</strong> Save character libraries as JSON files for backup or sharing</li>
+                    <li><strong>Integration:</strong> Characters automatically appear in the Novel Writing tab</li>
+                </ul>
+            </div>
+
+            <div class="feature">
+                <h3>✍️ Novel Writing Assistant</h3>
+                <ul>
+                    <li><strong>Context Memory:</strong> AI tracks story elements across chapters for consistency</li>
+                    <li><strong>Genre Prompts:</strong> Specialized prompts for Romance, Fantasy, Sci-Fi, Mystery, and more</li>
+                    <li><strong>Chapter Organization:</strong> Automatic chapter management with summaries</li>
+                    <li><strong>Character Integration:</strong> Reference any character from your database instantly</li>
+                    <li><strong>Multiple Export Formats:</strong> Save as TXT, DOCX, EPUB, or Markdown</li>
+                </ul>
+            </div>
+
+            <div class="warning">
+                <h3>⚠️ Important Notes for Creative Features</h3>
+                <ul>
+                    <li><strong>AI Provider Required:</strong> Character generation and writing assistance require configured AI providers</li>
+                    <li><strong>Context Limits:</strong> Very long stories may exceed model context windows - use chapter summaries</li>
+                    <li><strong>Data Storage:</strong> Characters and stories are saved locally in the application folder</li>
+                    <li><strong>Quality Depends on Model:</strong> Better models (GPT-4, Claude-3.5) produce higher quality content</li>
+                    <li><strong>Creative License:</strong> AI-generated content should be reviewed and edited for best results</li>
                 </ul>
             </div>
 
@@ -3510,7 +4449,7 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
         
         <div class="version">
             <h3>📋 Version Information</h3>
-            <p><strong>Version:</strong> 1.1</p>
+            <p><strong>Version:</strong> 1.2</p>
             <p><strong>Release Date:</strong> September 2025</p>
         </div>
         
@@ -3581,3 +4520,988 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             <p><strong>Content:</strong> Users are responsible for the content they choose to translate</p>
         </div>
         """
+    
+    # Audio Tab Methods
+    def browse_audio_file(self):
+        """Browse for audio/video file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Audio/Video File",
+            "", "Audio/Video Files (*.mp3 *.wav *.flac *.m4a *.mp4 *.avi *.mkv *.mov);;All Files (*)")
+        if file_path:
+            self.audio_file_edit.setText(file_path)
+            self.update_audio_info(file_path)
+            self.update_transcription_cost()
+
+    def update_audio_info(self, file_path):
+        """Update audio file information display"""
+        try:
+            if not self.audio_processor:
+                from core.audio_processor import AudioProcessor
+                self.audio_processor = AudioProcessor(self.config_manager)
+            
+            duration = self.audio_processor.get_audio_duration(file_path)
+            if duration > 0:
+                minutes = int(duration // 60)
+                seconds = int(duration % 60)
+                size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                self.audio_info_label.setText(f"Duration: {minutes}:{seconds:02d} | Size: {size_mb:.1f} MB")
+                self.audio_info_label.setStyleSheet("color: green; font-weight: bold;")
+            else:
+                self.audio_info_label.setText("Could not read audio file information")
+                self.audio_info_label.setStyleSheet("color: orange;")
+        except Exception as e:
+            self.audio_info_label.setText(f"Error: {str(e)}")
+            self.audio_info_label.setStyleSheet("color: red;")
+
+    def update_transcription_cost(self):
+        """Update cost estimation for transcription"""
+        if not self.audio_file_edit.text():
+            self.cost_label.setText("Estimated cost: $0.00")
+            return
+        
+        try:
+            if not self.audio_processor:
+                from core.audio_processor import AudioProcessor
+                self.audio_processor = AudioProcessor(self.config_manager)
+            
+            duration = self.audio_processor.get_audio_duration(self.audio_file_edit.text())
+            if duration == 0:
+                self.cost_label.setText("Estimated cost: Unable to calculate")
+                return
+            
+            provider_text = self.audio_provider_combo.currentText()
+            
+            # Show/hide local model settings based on provider
+            is_faster_whisper = "Faster-Whisper" in provider_text
+            self.local_settings_group.setVisible(is_faster_whisper)
+            
+            provider_map = {
+                "OpenAI Whisper": "openai-whisper",
+                "Groq Whisper V3 Large": "groq-whisper-v3-large",
+                "Groq Whisper Large V3 Turbo": "groq-whisper-large-v3-turbo",
+                "AssemblyAI Universal-2": "assemblyai-universal-2",
+                "Nova-1": "nova-1",
+                "Nova-2": "nova-2",
+                "Nova-3 Multilingual": "nova-3-multilingual",
+                "Nova-3 Monolingual": "nova-3-monolingual",
+                "Speechmatics": "speechmatics",
+                "Gladia": "gladia",
+                "Azure AI Speech Batch": "azure-ai-speech-batch",
+                "Azure AI Speech Realtime": "azure-ai-speech-realtime"
+            }
+            
+            provider_key = None
+            for name, key in provider_map.items():
+                if name in provider_text:
+                    provider_key = key
+                    break
+            
+            if provider_key:
+                cost_info = self.audio_processor.estimate_cost(duration, provider_key)
+                self.cost_label.setText(f"Estimated cost: ${cost_info['cost']:.4f} ({cost_info['price_per_unit']:.4f}/${cost_info['unit']})")
+                if cost_info['cost'] == 0:
+                    self.cost_label.setStyleSheet("font-weight: bold; color: green;")
+                else:
+                    self.cost_label.setStyleSheet("font-weight: bold; color: orange;")
+            else:
+                self.cost_label.setText("Estimated cost: $0.00 (Local)")
+                self.cost_label.setStyleSheet("font-weight: bold; color: green;")
+                
+        except Exception as e:
+            self.cost_label.setText(f"Cost estimation error: {str(e)}")
+            self.cost_label.setStyleSheet("color: red;")
+
+    def update_installed_models(self):
+        """Update the list of installed local models"""
+        try:
+            if not self.audio_processor:
+                from core.audio_processor import AudioProcessor
+                self.audio_processor = AudioProcessor(self.config_manager)
+            
+            installed = self.audio_processor.get_installed_models()
+            if installed:
+                self.installed_models_list.setText("\n".join([f"✓ {model}" for model in installed]))
+            else:
+                self.installed_models_list.setText("No local models installed")
+        except Exception as e:
+            self.installed_models_list.setText(f"Error checking models: {str(e)}")
+
+    def download_model(self):
+        """Download selected model"""
+        model_text = self.model_download_combo.currentText()
+        model_name = model_text.split()[0]  # Extract model name before size info
+        
+        try:
+            if not self.audio_processor:
+                from core.audio_processor import AudioProcessor
+                self.audio_processor = AudioProcessor(self.config_manager)
+            
+            if self.audio_processor.is_model_installed(model_name):
+                QMessageBox.information(self, "Model Already Installed", 
+                                      f"Model '{model_name}' is already installed.")
+                return
+            
+            self.download_model_btn.setEnabled(False)
+            self.model_progress.setVisible(True)
+            self.model_progress.setValue(0)
+            self.model_status_label.setText(f"Downloading {model_name}...")
+            
+            def progress_callback(current, total, status):
+                progress = int((current / total) * 100)
+                self.model_progress.setValue(progress)
+                self.model_status_label.setText(status)
+                QApplication.processEvents()
+            
+            success = self.audio_processor.download_model(model_name, progress_callback)
+            
+            if success:
+                self.model_status_label.setText(f"✓ Model {model_name} downloaded successfully!")
+                self.update_installed_models()
+                QMessageBox.information(self, "Download Complete", 
+                                      f"Model '{model_name}' has been downloaded successfully.")
+            else:
+                self.model_status_label.setText(f"✗ Failed to download {model_name}")
+                QMessageBox.warning(self, "Download Failed", 
+                                  f"Failed to download model '{model_name}'. Check the log for details.")
+            
+        except Exception as e:
+            self.model_status_label.setText(f"✗ Error: {str(e)}")
+            QMessageBox.critical(self, "Download Error", f"Error downloading model: {str(e)}")
+        finally:
+            self.download_model_btn.setEnabled(True)
+            self.model_progress.setVisible(False)
+
+    def delete_model(self):
+        """Delete selected model"""
+        model_text = self.model_download_combo.currentText()
+        model_name = model_text.split()[0]
+        
+        try:
+            if not self.audio_processor:
+                from core.audio_processor import AudioProcessor
+                self.audio_processor = AudioProcessor(self.config_manager)
+            
+            if not self.audio_processor.is_model_installed(model_name):
+                QMessageBox.information(self, "Model Not Installed", 
+                                      f"Model '{model_name}' is not installed.")
+                return
+            
+            reply = QMessageBox.question(self, "Delete Model", 
+                                       f"Are you sure you want to delete model '{model_name}'?",
+                                       QMessageBox.Yes | QMessageBox.No)
+            
+            if reply == QMessageBox.Yes:
+                success = self.audio_processor.delete_model(model_name)
+                if success:
+                    self.model_status_label.setText(f"✓ Model {model_name} deleted successfully!")
+                    self.update_installed_models()
+                    QMessageBox.information(self, "Delete Complete", 
+                                          f"Model '{model_name}' has been deleted.")
+                else:
+                    QMessageBox.warning(self, "Delete Failed", 
+                                      f"Failed to delete model '{model_name}'.")
+        except Exception as e:
+            QMessageBox.critical(self, "Delete Error", f"Error deleting model: {str(e)}")
+
+    def browse_subtitle_output(self):
+        """Browse for subtitle output directory"""
+        directory = QFileDialog.getExistingDirectory(
+            self, "Select Output Directory", "")
+        if directory:
+            self.subtitle_output_edit.setText(directory)
+
+    def start_transcription(self):
+        """Start the transcription process"""
+        if not self.audio_file_edit.text():
+            QMessageBox.warning(self, "No Audio File", "Please select an audio file first.")
+            return
+        
+        if not self.subtitle_output_edit.text():
+            QMessageBox.warning(self, "No Output Directory", "Please select an output directory.")
+            return
+        
+        try:
+            self.transcribe_btn.setEnabled(False)
+            self.stop_transcription_btn.setEnabled(True)
+            self.transcription_progress.setValue(0)
+            self.transcription_status.setText("Starting transcription...")
+            
+            # Start transcription in a separate thread
+            from PyQt5.QtCore import QThread, pyqtSignal
+            
+            class TranscriptionThread(QThread):
+                progress_updated = pyqtSignal(int, str)
+                transcription_complete = pyqtSignal(object, str)
+                error_occurred = pyqtSignal(str)
+                
+                def __init__(self, processor, audio_file, provider, options):
+                    super().__init__()
+                    self.processor = processor
+                    self.audio_file = audio_file
+                    self.provider = provider
+                    self.options = options
+                
+                def run(self):
+                    try:
+                        self.progress_updated.emit(25, "Initializing...")
+                        
+                        # Create progress callback for local models
+                        def progress_callback(percent, message):
+                            self.progress_updated.emit(percent, message)
+                        
+                        # Add progress callback to options if using faster-whisper
+                        if "Faster-Whisper" in self.provider:
+                            self.options['progress_callback'] = progress_callback
+                        
+                        # Determine provider
+                        provider_text = self.provider
+                        if "OpenAI" in provider_text:
+                            provider_key = "openai-whisper"
+                        elif "Faster-Whisper" in provider_text:
+                            # Extract model name from text like "Faster-Whisper Tiny (Free)"
+                            if "Tiny" in provider_text:
+                                model_name = "tiny"
+                            elif "Base" in provider_text:
+                                model_name = "base"
+                            elif "Small" in provider_text:
+                                model_name = "small"
+                            elif "Medium" in provider_text:
+                                model_name = "medium"
+                            elif "Large-V1" in provider_text:
+                                model_name = "large-v1"
+                            elif "Large-V2" in provider_text:
+                                model_name = "large-v2"
+                            else:
+                                model_name = "base"  # default fallback
+                            
+                            provider_key = f"faster-whisper-{model_name}"
+                        else:
+                            raise ValueError(f"Unsupported provider: {provider_text}")
+                        
+                        if "Faster-Whisper" not in provider_text:
+                            self.progress_updated.emit(50, "Transcribing audio...")
+                        
+                        # Perform transcription
+                        result = self.processor.transcribe_audio(self.audio_file, provider_key, **self.options)
+                        
+                        self.progress_updated.emit(90, "Transcription complete")
+                        self.transcription_complete.emit(result, provider_key)
+                        
+                    except Exception as e:
+                        self.error_occurred.emit(str(e))
+            
+            if not self.audio_processor:
+                from core.audio_processor import AudioProcessor
+                self.audio_processor = AudioProcessor(self.config_manager)
+            
+            # Prepare transcription options
+            options = {}
+            if self.audio_language_combo.currentText() != "Auto-detect":
+                options['language'] = self.audio_language_combo.currentText().lower()
+            
+            # Add local model settings if using faster-whisper
+            provider_text = self.audio_provider_combo.currentText()
+            if "Faster-Whisper" in provider_text:
+                options['compute_type'] = self.compute_type_combo.currentText()
+                options['device'] = self.device_combo.currentText()
+                options['beam_size'] = self.beam_size_spin.value()
+                options['temperature'] = self.temperature_spin.value()
+                options['vad_filter'] = self.vad_filter_check.isChecked()
+                options['word_timestamps'] = self.word_timestamps_check.isChecked()
+            
+            # Start transcription thread
+            self.transcription_thread = TranscriptionThread(
+                self.audio_processor,
+                self.audio_file_edit.text(),
+                self.audio_provider_combo.currentText(),
+                options
+            )
+            
+            self.transcription_thread.progress_updated.connect(self.update_transcription_progress)
+            self.transcription_thread.transcription_complete.connect(self.on_transcription_complete)
+            self.transcription_thread.error_occurred.connect(self.on_transcription_error)
+            self.transcription_thread.start()
+            
+        except Exception as e:
+            self.on_transcription_error(str(e))
+
+    def update_transcription_progress(self, value, status):
+        """Update transcription progress"""
+        self.transcription_progress.setValue(value)
+        self.transcription_status.setText(status)
+        
+        # Update time estimation if status contains timing info
+        if "elapsed" in status or "remaining" in status:
+            self.transcription_time_label.setText(status)
+        elif value == 100:
+            self.transcription_time_label.setText("Transcription completed!")
+
+    def on_transcription_complete(self, result, provider):
+        """Handle completed transcription"""
+        try:
+            # Display preview
+            self.transcription_preview.setText(result.text)
+            
+            # Save files
+            output_dir = self.subtitle_output_edit.text()
+            base_name = os.path.splitext(os.path.basename(self.audio_file_edit.text()))[0]
+            
+            # Save raw text if requested
+            if self.save_raw_check.isChecked():
+                raw_path = os.path.join(output_dir, f"{base_name}_raw.txt")
+                with open(raw_path, 'w', encoding='utf-8') as f:
+                    f.write(result.text)
+                self.log_message(f"Raw transcription saved to: {raw_path}")
+            
+            # Translate if requested
+            final_result = result
+            if self.audio_translate_check.isChecked():
+                self.transcription_status.setText("Translating...")
+                self.transcription_progress.setValue(95)
+                QApplication.processEvents()
+                
+                # Get target language from main config
+                config = self.config_manager.get_config()
+                target_lang = config.get('target_language', 'english')
+                final_result = self.audio_processor.translate_subtitles(result, target_lang)
+            
+            # Save subtitles
+            subtitle_format = self.subtitle_format_combo.currentText().lower()
+            subtitle_path = os.path.join(output_dir, f"{base_name}.{subtitle_format}")
+            
+            # Pass source file path for resolution detection in ASS format
+            source_file = self.audio_file_edit.text()
+            
+            # Get ASS settings if ASS format is selected
+            if subtitle_format == "ass":
+                auto_resolution = self.auto_resolution_check.isChecked()
+                manual_font_size = self.manual_font_spin.value()
+                success = self.audio_processor.save_subtitles(final_result, subtitle_path, subtitle_format, 
+                                                            source_file, auto_resolution, manual_font_size)
+            else:
+                success = self.audio_processor.save_subtitles(final_result, subtitle_path, subtitle_format, source_file)
+            
+            if success:
+                self.transcription_status.setText("✓ Transcription completed successfully!")
+                self.transcription_progress.setValue(100)
+                self.log_message(f"Subtitles saved to: {subtitle_path}")
+                QMessageBox.information(self, "Transcription Complete", 
+                                      f"Transcription completed successfully!\nOutput saved to: {subtitle_path}")
+            else:
+                self.transcription_status.setText("✗ Error saving subtitles")
+                QMessageBox.warning(self, "Save Error", "Error saving subtitle files.")
+                
+        except Exception as e:
+            self.on_transcription_error(str(e))
+        finally:
+            self.transcribe_btn.setEnabled(True)
+            self.stop_transcription_btn.setEnabled(False)
+
+    def on_transcription_error(self, error_msg):
+        """Handle transcription error"""
+        self.transcription_status.setText(f"✗ Error: {error_msg}")
+        self.transcription_progress.setValue(0)
+        self.transcribe_btn.setEnabled(True)
+        self.stop_transcription_btn.setEnabled(False)
+        self.log_message(f"Transcription error: {error_msg}")
+        QMessageBox.critical(self, "Transcription Error", f"Error during transcription:\n{error_msg}")
+
+    def stop_transcription(self):
+        """Stop the transcription process"""
+        if hasattr(self, 'transcription_thread') and self.transcription_thread.isRunning():
+            self.transcription_thread.terminate()
+            self.transcription_thread.wait()
+        
+        self.transcription_status.setText("Transcription stopped")
+        self.transcription_progress.setValue(0)
+        self.transcribe_btn.setEnabled(True)
+        self.stop_transcription_btn.setEnabled(False)
+
+    # ==================== LOCAL MODELS METHODS ====================
+    
+    def refresh_local_models(self):
+        """Refresh the list of available and installed models"""
+        try:
+            if not self.llamacpp_client:
+                from core.llamacpp_client import LlamaCppClient
+                self.llamacpp_client = LlamaCppClient(self.config_manager)
+            
+            # Clear lists
+            self.available_models_list.clear()
+            self.installed_models_list.clear()
+            self.test_model_combo.clear()
+            
+            # Populate available models
+            for model_key, model_info in self.llamacpp_client.available_models.items():
+                display_text = f"{model_info['name']} ({model_info['size']}) - {model_info['description']}"
+                self.available_models_list.addItem(display_text)
+                self.available_models_list.item(self.available_models_list.count() - 1).setData(Qt.UserRole, model_key)
+            
+            # Populate installed models
+            installed = self.llamacpp_client.get_installed_models()
+            for model_name in installed:
+                self.installed_models_list.addItem(model_name)
+                self.test_model_combo.addItem(model_name)
+            
+            self.local_status_label.setText(f"Ready - {len(installed)} models installed")
+            
+            # Connect selection handlers
+            self.available_models_list.itemClicked.connect(self.on_available_model_selected)
+            self.installed_models_list.itemClicked.connect(self.on_installed_model_selected)
+            
+        except Exception as e:
+            self.local_status_label.setText(f"Error: {e}")
+            self.log_message(f"Error refreshing local models: {e}")
+
+    def on_available_model_selected(self, item):
+        """Handle selection of available model"""
+        model_key = item.data(Qt.UserRole)
+        if model_key and model_key in self.llamacpp_client.available_models:
+            model_info = self.llamacpp_client.available_models[model_key]
+            info_text = f"""
+Model: {model_info['name']}
+Size: {model_info['size']}
+Description: {model_info['description']}
+Status: {'Installed' if self.llamacpp_client.is_model_installed(model_key) else 'Available for download'}
+"""
+            self.model_info_label.setText(info_text.strip())
+
+    def on_installed_model_selected(self, item):
+        """Handle selection of installed model"""
+        model_name = item.text()
+        info_text = f"""
+Model: {model_name}
+Status: Installed and ready to use
+Location: models/llamacpp/{model_name}.gguf
+"""
+        self.model_info_label.setText(info_text.strip())
+
+    def download_selected_model(self):
+        """Download the selected model"""
+        current_item = self.available_models_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "No Selection", "Please select a model to download.")
+            return
+        
+        model_key = current_item.data(Qt.UserRole)
+        if not model_key:
+            return
+        
+        # Check if already installed
+        if self.llamacpp_client.is_model_installed(model_key):
+            QMessageBox.information(self, "Already Installed", f"Model {model_key} is already installed.")
+            return
+        
+        try:
+            self.download_model_btn.setEnabled(False)
+            self.local_progress_bar.setVisible(True)
+            self.local_progress_bar.setValue(0)
+            
+            # Start download in thread
+            from PyQt5.QtCore import QThread, pyqtSignal
+            
+            class DownloadThread(QThread):
+                progress_updated = pyqtSignal(int, str)
+                download_complete = pyqtSignal(bool, str)
+                
+                def __init__(self, client, model_key):
+                    super().__init__()
+                    self.client = client
+                    self.model_key = model_key
+                
+                def run(self):
+                    def progress_callback(percent, message):
+                        self.progress_updated.emit(percent, message)
+                    
+                    try:
+                        success = self.client.download_model(self.model_key, progress_callback)
+                        self.download_complete.emit(success, "Download completed successfully" if success else "Download failed")
+                    except Exception as e:
+                        self.download_complete.emit(False, str(e))
+            
+            self.download_thread = DownloadThread(self.llamacpp_client, model_key)
+            self.download_thread.progress_updated.connect(self.update_download_progress)
+            self.download_thread.download_complete.connect(self.on_download_complete)
+            self.download_thread.start()
+            
+        except Exception as e:
+            self.on_download_complete(False, str(e))
+
+    def update_download_progress(self, percent, message):
+        """Update download progress"""
+        self.local_progress_bar.setValue(percent)
+        self.local_status_label.setText(message)
+
+    def on_download_complete(self, success, message):
+        """Handle download completion"""
+        self.local_progress_bar.setVisible(False)
+        self.download_model_btn.setEnabled(True)
+        
+        if success:
+            self.local_status_label.setText("Download completed successfully")
+            self.refresh_local_models()
+            QMessageBox.information(self, "Download Complete", "Model downloaded successfully!")
+        else:
+            self.local_status_label.setText(f"Download failed: {message}")
+            QMessageBox.critical(self, "Download Failed", f"Failed to download model:\n{message}")
+
+    def load_selected_model(self):
+        """Load the selected model for testing"""
+        model_name = self.test_model_combo.currentText()
+        if not model_name:
+            QMessageBox.warning(self, "No Model", "Please select a model to load.")
+            return
+        
+        try:
+            self.load_model_btn.setEnabled(False)
+            self.local_status_label.setText("Loading model...")
+            
+            # Load model with current settings
+            success = self.llamacpp_client.load_model(
+                model_name,
+                n_ctx=self.local_ctx_spin.value(),
+                n_threads=self.threads_spin.value(),
+                n_gpu_layers=self.gpu_layers_spin.value()
+            )
+            
+            if success:
+                self.local_status_label.setText(f"Model loaded: {model_name}")
+                self.test_translate_btn.setEnabled(True)
+                self.unload_model_btn.setEnabled(True)
+                self.load_model_btn.setText("🔄 Reload Model")
+            else:
+                self.local_status_label.setText("Failed to load model")
+                QMessageBox.critical(self, "Load Failed", "Failed to load the model.")
+            
+        except Exception as e:
+            self.local_status_label.setText(f"Error: {e}")
+            QMessageBox.critical(self, "Load Error", f"Error loading model:\n{e}")
+        finally:
+            self.load_model_btn.setEnabled(True)
+
+    def unload_current_model(self):
+        """Unload the current model"""
+        try:
+            self.llamacpp_client.unload_model()
+            self.local_status_label.setText("Model unloaded")
+            self.test_translate_btn.setEnabled(False)
+            self.unload_model_btn.setEnabled(False)
+            self.load_model_btn.setText("🔄 Load Model")
+        except Exception as e:
+            QMessageBox.critical(self, "Unload Error", f"Error unloading model:\n{e}")
+
+    def test_translation(self):
+        """Test translation with the loaded model"""
+        if not self.test_input.toPlainText().strip():
+            QMessageBox.warning(self, "No Input", "Please enter text to translate.")
+            return
+        
+        try:
+            self.test_translate_btn.setEnabled(False)
+            self.local_status_label.setText("Translating...")
+            
+            text = self.test_input.toPlainText().strip()
+            target_lang = self.test_target_combo.currentText()
+            
+            # Perform translation
+            result = self.llamacpp_client.translate_text(
+                text, 
+                target_lang,
+                temperature=self.local_temp_spin.value()
+            )
+            
+            self.test_output.setPlainText(result)
+            self.local_status_label.setText("Translation completed")
+            
+        except Exception as e:
+            self.local_status_label.setText(f"Translation error: {e}")
+            QMessageBox.critical(self, "Translation Error", f"Error during translation:\n{e}")
+        finally:
+            self.test_translate_btn.setEnabled(True)
+    
+    # Character Tab Methods
+    def update_style_preview(self):
+        """Update character style preview"""
+        style = self.char_style_combo.currentText()
+        previews = {
+            "Japanese": "Japanese style characters with names like Akira, Sakura, Yuki. Traditional Japanese aesthetics, anime/manga inspired features.",
+            "Korean": "Korean style characters with names like Min-jun, So-young, Hae-won. Modern K-drama aesthetics, fashionable appearance.",
+            "Chinese": "Chinese style characters with names like Wei Lin, Mei Ling, Chen. Traditional and modern Chinese cultural elements.",
+            "Fantasy": "Fantasy characters with mystical names like Lyraleth, Thorven, Zephyr. Magic-inspired features, mythical aesthetics.",
+            "Western": "Western style characters with names like Emily, Alexander, Sarah. Contemporary or historical Western appearance."
+        }
+        self.style_preview_label.setText(previews.get(style, ""))
+    
+    def generate_character(self):
+        """Generate a new character using AI"""
+        try:
+            if not self.novel_assistant:
+                from core.novel_assistant import NovelAssistant
+                from core.api_client import APIClient
+                api_client = APIClient(self.config.get("provider_config", {}))
+                self.novel_assistant = NovelAssistant(api_client)
+            
+            # Gather requirements
+            style = self.char_style_combo.currentText()
+            age = self.char_age_edit.text()
+            gender = self.char_gender_combo.currentText()
+            occupation = self.char_occupation_edit.text()
+            personality = self.char_personality_edit.text()
+            custom = self.char_custom_edit.toPlainText()
+            
+            requirements = {
+                "style": style,
+                "age": age if age else "any",
+                "gender": gender if gender != "Any" else "any",
+                "occupation": occupation if occupation else "any",
+                "personality": personality if personality else "varied",
+                "custom": custom if custom else "none"
+            }
+            
+            self.generate_char_btn.setText("🔄 Generating...")
+            self.generate_char_btn.setEnabled(False)
+            
+            # Generate character
+            character = self.novel_assistant.generate_character(requirements)
+            
+            if character:
+                self.current_character = character
+                self.display_character(character)
+                self.save_char_btn.setEnabled(True)
+                self.log_message(f"Generated character: {character.name}")
+            else:
+                self.log_message("Failed to generate character", "error")
+            
+        except Exception as e:
+            self.log_message(f"Error generating character: {str(e)}", "error")
+        finally:
+            self.generate_char_btn.setText("🎲 Generate Character")
+            self.generate_char_btn.setEnabled(True)
+    
+    def display_character(self, character):
+        """Display character details"""
+        self.char_name_display.setText(character.name)
+        self.char_personality_display.setText(character.personality)
+        self.char_appearance_display.setText(character.appearance)
+        self.char_background_display.setText(character.background)
+        
+        # Display custom fields
+        custom_text = ""
+        for field, value in character.custom_fields.items():
+            custom_text += f"{field}: {value}\n\n"
+        self.char_custom_display.setText(custom_text.strip())
+    
+    def save_character(self):
+        """Save current character"""
+        if not self.current_character:
+            return
+        
+        try:
+            if not self.novel_db:
+                from core.novel_models import NovelDatabase
+                self.novel_db = NovelDatabase()
+            
+            self.novel_db.save_character(self.current_character)
+            self.log_message(f"Character '{self.current_character.name}' saved")
+            self.refresh_saved_characters()
+            
+        except Exception as e:
+            self.log_message(f"Error saving character: {str(e)}", "error")
+    
+    def load_character(self):
+        """Load selected character"""
+        current_item = self.saved_chars_list.currentItem()
+        if not current_item:
+            return
+        
+        char_id = current_item.data(0x0100)  # Qt.UserRole
+        self.load_character_by_id(char_id)
+    
+    def load_selected_character(self, item):
+        """Load character when double-clicked"""
+        char_id = item.data(0x0100)  # Qt.UserRole
+        self.load_character_by_id(char_id)
+    
+    def load_character_by_id(self, char_id):
+        """Load character by ID"""
+        try:
+            if not self.novel_db:
+                from core.novel_models import NovelDatabase
+                self.novel_db = NovelDatabase()
+            
+            character = self.novel_db.get_character(char_id)
+            if character:
+                self.current_character = character
+                self.display_character(character)
+                self.save_char_btn.setEnabled(True)
+                self.log_message(f"Loaded character: {character.name}")
+            
+        except Exception as e:
+            self.log_message(f"Error loading character: {str(e)}", "error")
+    
+    def new_character(self):
+        """Start creating a new character"""
+        self.current_character = None
+        self.char_name_display.clear()
+        self.char_personality_display.clear()
+        self.char_appearance_display.clear()
+        self.char_background_display.clear()
+        self.char_custom_display.clear()
+        self.save_char_btn.setEnabled(False)
+        
+        # Clear input fields
+        self.char_age_edit.clear()
+        self.char_gender_combo.setCurrentIndex(0)
+        self.char_occupation_edit.clear()
+        self.char_personality_edit.clear()
+        self.char_custom_edit.clear()
+    
+    def refresh_saved_characters(self):
+        """Refresh the list of saved characters"""
+        self.saved_chars_list.clear()
+        
+        try:
+            if not self.novel_db:
+                from core.novel_models import NovelDatabase
+                self.novel_db = NovelDatabase()
+            
+            characters = self.novel_db.get_all_characters()
+            for character in characters:
+                item = QListWidgetItem(f"{character.name} ({character.style})")
+                item.setData(0x0100, character.id)  # Qt.UserRole
+                self.saved_chars_list.addItem(item)
+                
+        except Exception as e:
+            self.log_message(f"Error loading characters: {str(e)}", "error")
+    
+    # Novel Writing Tab Methods
+    def create_new_project(self):
+        """Create a new novel project"""
+        from PyQt5.QtWidgets import QInputDialog
+        
+        title, ok = QInputDialog.getText(self, "New Project", "Project Title:")
+        if not ok or not title.strip():
+            return
+        
+        description, ok = QInputDialog.getMultiLineText(self, "New Project", "Project Description:")
+        if not ok:
+            description = ""
+        
+        try:
+            if not self.novel_db:
+                from core.novel_models import NovelDatabase
+                self.novel_db = NovelDatabase()
+            
+            from core.novel_models import Project
+            project = Project(
+                title=title.strip(),
+                description=description.strip(),
+                genre="",
+                style="",
+                target_length=""
+            )
+            
+            self.novel_db.save_project(project)
+            self.log_message(f"Created project: {title}")
+            self.refresh_projects()
+            
+            # Select the new project
+            index = self.novel_project_combo.findText(title)
+            if index >= 0:
+                self.novel_project_combo.setCurrentIndex(index)
+                
+        except Exception as e:
+            self.log_message(f"Error creating project: {str(e)}", "error")
+    
+    def load_novel_project(self, project_title):
+        """Load selected project"""
+        if not project_title or project_title == "Select Project...":
+            self.current_project = None
+            self.project_info_label.setText("No project selected")
+            self.active_chars_list.clear()
+            return
+        
+        try:
+            if not self.novel_db:
+                from core.novel_models import NovelDatabase
+                self.novel_db = NovelDatabase()
+            
+            projects = self.novel_db.get_all_projects()
+            project = next((p for p in projects if p.title == project_title), None)
+            
+            if project:
+                self.current_project = project
+                info_text = f"Title: {project.title}\n"
+                if project.description:
+                    info_text += f"Description: {project.description}\n"
+                if project.genre:
+                    info_text += f"Genre: {project.genre}\n"
+                self.project_info_label.setText(info_text.strip())
+                
+                self.load_project_characters()
+                self.log_message(f"Loaded project: {project_title}")
+            
+        except Exception as e:
+            self.log_message(f"Error loading project: {str(e)}", "error")
+    
+    def load_project_characters(self):
+        """Load characters for current project"""
+        self.active_chars_list.clear()
+        
+        if not self.current_project:
+            return
+        
+        try:
+            if not self.novel_db:
+                from core.novel_models import NovelDatabase
+                self.novel_db = NovelDatabase()
+            
+            characters = self.novel_db.get_all_characters()
+            for character in characters:
+                item = QListWidgetItem(character.name)
+                item.setData(0x0100, character.id)  # Qt.UserRole
+                self.active_chars_list.addItem(item)
+                
+        except Exception as e:
+            self.log_message(f"Error loading characters: {str(e)}", "error")
+    
+    def add_active_character(self):
+        """Add character to active list"""
+        # This would open a dialog to select from saved characters
+        self.load_project_characters()
+    
+    def remove_active_character(self):
+        """Remove character from active list"""
+        current_item = self.active_chars_list.currentItem()
+        if current_item:
+            self.active_chars_list.takeItem(self.active_chars_list.row(current_item))
+    
+    def generate_writing(self):
+        """Generate text using AI assistance"""
+        try:
+            if not self.novel_assistant:
+                from core.novel_assistant import NovelAssistant
+                from core.api_client import APIClient
+                api_client = APIClient(self.config.get("provider_config", {}))
+                self.novel_assistant = NovelAssistant(api_client)
+            
+            mode = self.writing_mode_combo.currentText()
+            goal = self.writing_goal_edit.text()
+            context = self.novel_context_edit.toPlainText()
+            key_points = self.key_points_edit.toPlainText()
+            current_text = self.novel_text_edit.toPlainText()
+            
+            # Get active characters
+            active_chars = []
+            for i in range(self.active_chars_list.count()):
+                item = self.active_chars_list.item(i)
+                char_id = item.data(0x0100)
+                character = self.novel_db.get_character(char_id) if self.novel_db else None
+                if character:
+                    active_chars.append(character)
+            
+            self.generate_text_btn.setText("🔄 Generating...")
+            self.generate_text_btn.setEnabled(False)
+            
+            # Generate based on mode
+            generated_text = ""
+            if mode == "Continue Story":
+                generated_text = self.novel_assistant.continue_story(
+                    current_text, context, active_chars, goal
+                )
+            elif mode == "Write Scene":
+                generated_text = self.novel_assistant.write_scene(
+                    goal, context, active_chars, key_points
+                )
+            elif mode == "Write Dialogue":
+                generated_text = self.novel_assistant.write_dialogue(
+                    active_chars, context, goal
+                )
+            elif mode == "Free Writing":
+                generated_text = self.novel_assistant.continue_story(
+                    current_text, f"{context}\n\nGoal: {goal}", active_chars
+                )
+            
+            if generated_text:
+                # Add generated text to writing area
+                cursor = self.novel_text_edit.textCursor()
+                cursor.movePosition(cursor.End)
+                cursor.insertText("\n\n" + generated_text)
+                self.novel_text_edit.setTextCursor(cursor)
+                
+                self.log_message(f"Generated {len(generated_text)} characters using {mode}")
+            else:
+                self.log_message("Failed to generate text", "error")
+            
+        except Exception as e:
+            self.log_message(f"Error generating text: {str(e)}", "error")
+        finally:
+            self.generate_text_btn.setText("✨ Generate with AI")
+            self.generate_text_btn.setEnabled(True)
+    
+    def update_word_count(self):
+        """Update word count display"""
+        text = self.novel_text_edit.toPlainText()
+        word_count = len(text.split()) if text.strip() else 0
+        self.word_count_label.setText(f"Words: {word_count}")
+    
+    def save_writing(self):
+        """Save current writing session"""
+        if not self.current_project:
+            self.log_message("Please select a project first", "error")
+            return
+        
+        try:
+            if not self.novel_db:
+                from core.novel_models import NovelDatabase
+                self.novel_db = NovelDatabase()
+            
+            from core.novel_models import WritingSession
+            import datetime
+            
+            session = WritingSession(
+                project_id=self.current_project.id,
+                content=self.novel_text_edit.toPlainText(),
+                timestamp=datetime.datetime.now(),
+                word_count=len(self.novel_text_edit.toPlainText().split())
+            )
+            
+            self.novel_db.save_writing_session(session)
+            self.log_message("Writing session saved")
+            
+        except Exception as e:
+            self.log_message(f"Error saving writing: {str(e)}", "error")
+    
+    def export_writing(self):
+        """Export writing to file"""
+        from PyQt5.QtWidgets import QFileDialog
+        
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export Writing", f"{self.current_project.title if self.current_project else 'novel'}.txt",
+            "Text Files (*.txt);;All Files (*)"
+        )
+        
+        if filename:
+            try:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(self.novel_text_edit.toPlainText())
+                self.log_message(f"Writing exported to {filename}")
+            except Exception as e:
+                self.log_message(f"Error exporting: {str(e)}", "error")
+    
+    def refresh_projects(self):
+        """Refresh the list of projects"""
+        self.novel_project_combo.clear()
+        self.novel_project_combo.addItem("Select Project...")
+        
+        try:
+            if not self.novel_db:
+                from core.novel_models import NovelDatabase
+                self.novel_db = NovelDatabase()
+            
+            projects = self.novel_db.get_all_projects()
+            for project in projects:
+                self.novel_project_combo.addItem(project.title)
+                
+        except Exception as e:
+            self.log_message(f"Error loading projects: {str(e)}", "error")

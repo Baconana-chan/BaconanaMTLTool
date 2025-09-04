@@ -20,6 +20,7 @@ class ModelProvider(Enum):
     VLLM = "vllm"
     COLAB = "colab"
     KAGGLE = "kaggle"
+    LLAMACPP = "llamacpp"
     CUSTOM = "custom"
 
 
@@ -525,6 +526,85 @@ class ModelDatabase:
             eroge_support=True
         )
         
+        # Llama.cpp Local Models - Free local inference
+        models["llama-3.2-1b-instruct"] = ModelInfo(
+            name="llama-3.2-1b-instruct",
+            display_name="Llama 3.2 1B Instruct (Local)",
+            provider=ModelProvider.LLAMACPP,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),  # Free local inference
+            context_length=4096,
+            description="Small, fast local model good for basic translation tasks",
+            api_name="llama-3.2-1b-instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True,
+            recommended_for_translation=True
+        )
+        
+        models["llama-3.2-3b-instruct"] = ModelInfo(
+            name="llama-3.2-3b-instruct",
+            display_name="Llama 3.2 3B Instruct (Local)",
+            provider=ModelProvider.LLAMACPP,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),
+            context_length=4096,
+            description="Balanced local model for general translation use",
+            api_name="llama-3.2-3b-instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True,
+            recommended_for_translation=True
+        )
+        
+        models["llama-3.1-8b-instruct"] = ModelInfo(
+            name="llama-3.1-8b-instruct",
+            display_name="Llama 3.1 8B Instruct (Local)",
+            provider=ModelProvider.LLAMACPP,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),
+            context_length=8192,
+            description="High quality local model for complex translation tasks",
+            api_name="llama-3.1-8b-instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True,
+            recommended_for_translation=True
+        )
+        
+        models["qwen2.5-7b-instruct"] = ModelInfo(
+            name="qwen2.5-7b-instruct",
+            display_name="Qwen2.5 7B Instruct (Local)",
+            provider=ModelProvider.LLAMACPP,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),
+            context_length=8192,
+            description="Multilingual local model with excellent reasoning capabilities",
+            api_name="qwen2.5-7b-instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True,
+            recommended_for_translation=True
+        )
+        
+        models["mistral-7b-instruct"] = ModelInfo(
+            name="mistral-7b-instruct",
+            display_name="Mistral 7B Instruct v0.3 (Local)",
+            provider=ModelProvider.LLAMACPP,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),
+            context_length=8192,
+            description="Fast and efficient local instruction-following model",
+            api_name="mistral-7b-instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True,
+            recommended_for_translation=True
+        )
+        
+        models["gemma-2-9b-instruct"] = ModelInfo(
+            name="gemma-2-9b-instruct",
+            display_name="Gemma 2 9B Instruct (Local)",
+            provider=ModelProvider.LLAMACPP,
+            pricing=ModelPricing(input_cost=0.0, output_cost=0.0),
+            context_length=8192,
+            description="Google's high-performance local model",
+            api_name="gemma-2-9b-instruct",
+            content_policy=ContentPolicy.DEVELOPER_RESPONSIBILITY,
+            eroge_support=True,
+            recommended_for_translation=True
+        )
+        
         return models
     
     def get_model(self, name: str) -> Optional[ModelInfo]:
@@ -695,3 +775,20 @@ class ModelManager:
 
 # Global model database instance
 MODEL_DB = ModelDatabase()
+
+
+@dataclass
+class SubtitleSegment:
+    """Represents a single subtitle segment with timing"""
+    start: float  # Start time in seconds
+    end: float    # End time in seconds
+    text: str     # Subtitle text
+
+
+@dataclass
+class TranscriptionResult:
+    """Result of audio transcription"""
+    text: str                    # Full transcribed text
+    segments: List[SubtitleSegment]  # Timed segments for subtitles
+    language: str                # Detected/specified language
+    confidence: Optional[float] = None  # Overall confidence score

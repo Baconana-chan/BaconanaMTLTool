@@ -16,6 +16,9 @@ transformers==4.56.0
 requests==2.32.5
 aiohttp==3.12.15
 
+# Local AI model support
+llama-cpp-python==0.2.90
+
 # Light Novel format support
 python-docx==1.1.2
 PyPDF2==3.0.1
@@ -24,3 +27,7 @@ ebooklib==0.18
 reportlab==4.2.5
 beautifulsoup4==4.12.3
 chardet==5.2.0
+
+# Audio transcription support
+faster-whisper>=0.8.0
+ffmpeg-python>=0.2.0

@@ -220,13 +220,97 @@ class ProviderManager:
     
     def _create_client(self, provider: ProviderConfig) -> APIClient:
         """Create appropriate client for provider"""
-        if provider.provider in [ModelProvider.HUGGINGFACE, ModelProvider.VLLM, 
+        if provider.provider == ModelProvider.LLAMACPP:
+            # For llama.cpp, create a special client wrapper
+            from .llamacpp_client import LlamaCppClient
+            return self._create_llamacpp_wrapper(provider)
+        elif provider.provider in [ModelProvider.HUGGINGFACE, ModelProvider.VLLM, 
                                ModelProvider.COLAB, ModelProvider.KAGGLE]:
             # Cloud client will be handled in APIClient
             pass
         
         # Create standard API client with provider config
         return APIClient(provider.config)
+    
+    def _create_llamacpp_wrapper(self, provider: ProviderConfig):
+        """Create a wrapper that makes LlamaCppClient compatible with APIClient interface"""
+        from .llamacpp_client import LlamaCppClient
+        
+        class LlamaCppWrapper:
+            def __init__(self, config):
+                self.llamacpp_client = LlamaCppClient(config.get('config_manager'))
+                self.config = config
+                self.model_loaded = False
+                
+            def translate_batch(self, text_batch: Dict[str, str]) -> Dict[str, str]:
+                """Translate batch of texts"""
+                if not self.model_loaded:
+                    self._ensure_model_loaded()
+                
+                results = {}
+                target_language = self.config.get('target_language', 'English')
+                source_language = self.config.get('source_language', 'auto')
+                
+                for key, text in text_batch.items():
+                    try:
+                        translated = self.llamacpp_client.translate_text(
+                            text, target_language, source_language
+                        )
+                        results[key] = translated
+                    except Exception as e:
+                        logging.error(f"Error translating text with llama.cpp: {e}")
+                        results[key] = text  # Fallback to original text
+                
+                return results
+            
+            def test_connection(self) -> Tuple[bool, str]:
+                """Test llama.cpp connection"""
+                try:
+                    if not self.llamacpp_client.is_available():
+                        return False, "llama-cpp-python not available"
+                    
+                    # Try to load a model if specified
+                    model_key = self.config.get('model', None)
+                    if model_key:
+                        if not self.llamacpp_client.is_model_installed(model_key):
+                            return False, f"Model {model_key} not installed"
+                        
+                        success = self.llamacpp_client.load_model(model_key)
+                        if not success:
+                            return False, f"Failed to load model {model_key}"
+                        
+                        self.model_loaded = True
+                    
+                    return True, "OK"
+                    
+                except Exception as e:
+                    return False, str(e)
+            
+            def _ensure_model_loaded(self):
+                """Ensure a model is loaded"""
+                if self.model_loaded:
+                    return
+                
+                model_key = self.config.get('model')
+                if not model_key:
+                    raise RuntimeError("No model specified for llama.cpp provider")
+                
+                if not self.llamacpp_client.is_model_installed(model_key):
+                    raise RuntimeError(f"Model {model_key} is not installed")
+                
+                success = self.llamacpp_client.load_model(
+                    model_key,
+                    n_ctx=self.config.get('n_ctx', 4096),
+                    n_threads=self.config.get('n_threads', -1),
+                    n_gpu_layers=self.config.get('n_gpu_layers', 0)
+                )
+                
+                if not success:
+                    raise RuntimeError(f"Failed to load model {model_key}")
+                
+                self.model_loaded = True
+        
+        return LlamaCppWrapper(provider.config)
     
     def _test_provider_connection(self, provider: ProviderConfig) -> bool:
         """Test connection to a provider"""

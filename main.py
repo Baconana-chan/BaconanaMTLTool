@@ -15,7 +15,7 @@ def main():
     """Main application entry point"""
     app = QApplication(sys.argv)
     app.setApplicationName("Eroge Translation Tool")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationVersion("1.2.0")
     app.setOrganizationName("MTL Tools")
     
     # Set application icon and style
