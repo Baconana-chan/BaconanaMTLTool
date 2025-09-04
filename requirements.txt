@@ -31,3 +31,4 @@ chardet==5.2.0
 # Audio transcription support
 faster-whisper>=0.8.0
 ffmpeg-python>=0.2.0
+onnxruntime>=1.15.0

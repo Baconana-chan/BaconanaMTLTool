@@ -25,6 +25,12 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
 
+try:
+    import onnxruntime
+    ONNXRUNTIME_AVAILABLE = True
+except ImportError:
+    ONNXRUNTIME_AVAILABLE = False
+
 from .api_client import APIClient
 from .models import TranscriptionResult, SubtitleSegment
 
@@ -75,6 +81,18 @@ class AudioProcessor:
                 "config.json": "https://huggingface.co/guillaumekln/faster-whisper-large-v2/resolve/main/config.json",
                 "tokenizer.json": "https://huggingface.co/guillaumekln/faster-whisper-large-v2/resolve/main/tokenizer.json",
                 "vocabulary.txt": "https://huggingface.co/guillaumekln/faster-whisper-large-v2/resolve/main/vocabulary.txt"
+            },
+            "anime-whisper": {
+                "model.safetensors": "https://huggingface.co/litagin/anime-whisper/resolve/main/model.safetensors",
+                "added_tokens.json": "https://huggingface.co/litagin/anime-whisper/resolve/main/added_tokens.json",
+                "config.json": "https://huggingface.co/litagin/anime-whisper/resolve/main/config.json",
+                "generation_config.json": "https://huggingface.co/litagin/anime-whisper/resolve/main/generation_config.json",
+                "merges.txt": "https://huggingface.co/litagin/anime-whisper/resolve/main/merges.txt",
+                "normalizer.json": "https://huggingface.co/litagin/anime-whisper/resolve/main/normalizer.json",
+                "preprocessor_config.json": "https://huggingface.co/litagin/anime-whisper/resolve/main/preprocessor_config.json",
+                "special_tokens_map.json": "https://huggingface.co/litagin/anime-whisper/resolve/main/special_tokens_map.json",
+                "tokenizer_config.json": "https://huggingface.co/litagin/anime-whisper/resolve/main/tokenizer_config.json",
+                "vocab.json": "https://huggingface.co/litagin/anime-whisper/resolve/main/vocab.json"
             }
         }
         
@@ -92,21 +110,80 @@ class AudioProcessor:
             "gladia": {"price": 0.612, "unit": "hour"},
             "azure-ai-speech-realtime": {"price": 1.0, "unit": "hour"},
             "azure-ai-speech-batch": {"price": 0.18, "unit": "hour"},
-            "faster-whisper": {"price": 0.0, "unit": "free"}
+            "faster-whisper": {"price": 0.0, "unit": "free"},
+            "anime-whisper": {"price": 0.0, "unit": "free"}
         }
+
+    def check_dependencies(self) -> Dict[str, Dict[str, Union[bool, str]]]:
+        """Check availability of all dependencies"""
+        deps = {
+            "faster_whisper": {
+                "available": self._check_import("faster_whisper"),
+                "description": "Required for local transcription models",
+                "install_command": "pip install faster-whisper"
+            },
+            "openai": {
+                "available": self._check_import("openai"),
+                "description": "Required for OpenAI Whisper API",
+                "install_command": "pip install openai"
+            },
+            "onnxruntime": {
+                "available": self._check_import("onnxruntime"),
+                "description": "Required for VAD (Voice Activity Detection) filter",
+                "install_command": "pip install onnxruntime"
+            }
+        }
+        return deps
+
+    def _check_import(self, module_name: str) -> bool:
+        """Dynamically check if a module can be imported"""
+        try:
+            __import__(module_name)
+            return True
+        except ImportError:
+            return False
+
+    def get_missing_dependencies(self) -> List[str]:
+        """Get list of missing dependencies"""
+        deps = self.check_dependencies()
+        missing = []
+        for name, info in deps.items():
+            if not info["available"]:
+                missing.append(name)
+        return missing
+
+    def can_use_vad_filter(self) -> bool:
+        """Check if VAD filter can be used"""
+        return self._check_import("onnxruntime")
 
     def get_installed_models(self) -> List[str]:
         """Get list of installed faster-whisper models"""
         installed = []
         for model_name in self.faster_whisper_models.keys():
             model_path = self.models_dir / model_name
-            if model_path.exists() and (model_path / "model.bin").exists():
-                installed.append(model_name)
+            if model_path.exists():
+                # Check for different model file types
+                if model_name == "anime-whisper":
+                    # Anime-whisper uses .safetensors
+                    if (model_path / "model.safetensors").exists():
+                        installed.append(model_name)
+                else:
+                    # Standard faster-whisper models use .bin
+                    if (model_path / "model.bin").exists():
+                        installed.append(model_name)
         return installed
 
     def is_model_installed(self, model_name: str) -> bool:
         """Check if a specific model is installed"""
         model_path = self.models_dir / model_name
+        if not model_path.exists():
+            return False
+        
+        # Check for different model file types
+        if model_name == "anime-whisper":
+            return (model_path / "model.safetensors").exists()
+        else:
+            return (model_path / "model.bin").exists()
         return model_path.exists() and (model_path / "model.bin").exists()
 
     def download_model(self, model_name: str, progress_callback=None) -> bool:
@@ -277,13 +354,26 @@ class AudioProcessor:
             # Get audio duration for progress estimation
             start_time = time.time()
             
+            # Check VAD filter availability
+            if vad_filter and not self.can_use_vad_filter():
+                self.logger.warning("VAD filter requested but onnxruntime not available. Disabling VAD filter.")
+                vad_filter = False
+            
             # Prepare transcription parameters
             transcribe_params = {
                 "beam_size": beam_size,
-                "temperature": temperature if temperature > 0 else None,
                 "vad_filter": vad_filter,
                 "word_timestamps": word_timestamps
             }
+            
+            # Only add temperature if it's greater than 0
+            if temperature > 0:
+                transcribe_params["temperature"] = temperature
+            
+            self.logger.info(f"Transcription parameters: {transcribe_params}")
+            
+            if progress_callback:
+                progress_callback(25, "Starting transcription with faster-whisper...")
             
             segments, info = model.transcribe(audio_file, **transcribe_params)
             
@@ -295,21 +385,35 @@ class AudioProcessor:
                 progress_callback(30, "Processing segments...")
             
             for i, segment in enumerate(segments):
+                # Ensure start and end are valid numbers
+                segment_start = segment.start if segment.start is not None else 0.0
+                segment_end = segment.end if segment.end is not None else segment_start + 1.0
+                
                 subtitle_segments.append(SubtitleSegment(
-                    start=segment.start,
-                    end=segment.end,
+                    start=segment_start,
+                    end=segment_end,
                     text=segment.text.strip()
                 ))
                 full_text += segment.text + " "
                 
                 # Update progress based on processed audio duration
-                processed_duration = segment.end
+                processed_duration = segment_end
                 if progress_callback and i % 10 == 0:  # Update every 10 segments
                     elapsed_time = time.time() - start_time
-                    if info.duration and info.duration > 0:
-                        progress_percent = min(30 + int((processed_duration / info.duration) * 60), 90)
-                        remaining_time = (elapsed_time / processed_duration) * (info.duration - processed_duration) if processed_duration > 0 else 0
-                        progress_callback(progress_percent, f"Processing... ({elapsed_time:.1f}s elapsed, ~{remaining_time:.1f}s remaining)")
+                    if (info.duration and info.duration > 0 and 
+                        processed_duration > 0):
+                        try:
+                            progress_percent = min(30 + int((processed_duration / info.duration) * 60), 90)
+                            remaining_duration = info.duration - processed_duration
+                            if remaining_duration > 0:
+                                remaining_time = (elapsed_time / processed_duration) * remaining_duration
+                                progress_callback(progress_percent, f"Processing... ({elapsed_time:.1f}s elapsed, ~{remaining_time:.1f}s remaining)")
+                            else:
+                                progress_callback(progress_percent, f"Processing... ({elapsed_time:.1f}s elapsed)")
+                        except (ZeroDivisionError, TypeError, AttributeError):
+                            progress_callback(30 + min(i, 60), f"Processing segment {i+1}... ({elapsed_time:.1f}s elapsed)")
+                    else:
+                        progress_callback(30 + min(i, 60), f"Processing segment {i+1}... ({elapsed_time:.1f}s elapsed)")
             
             if progress_callback:
                 progress_callback(95, "Finalizing transcription...")
@@ -327,7 +431,10 @@ class AudioProcessor:
             return result
             
         except Exception as e:
+            import traceback
             self.logger.error(f"Faster-whisper transcription error: {e}")
+            self.logger.error(f"Error type: {type(e).__name__}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
     def transcribe_audio(self, audio_file: str, provider: str, **kwargs) -> TranscriptionResult:
@@ -339,6 +446,8 @@ class AudioProcessor:
         elif provider.startswith("faster-whisper-"):
             model_name = provider.replace("faster-whisper-", "")
             return self.transcribe_with_faster_whisper(audio_file, model_name, **kwargs)
+        elif provider.startswith("anime-whisper"):
+            return self.transcribe_with_faster_whisper(audio_file, "anime-whisper", **kwargs)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
 
@@ -405,7 +514,7 @@ class AudioProcessor:
 
     def calculate_ass_font_size(self, video_height: int) -> int:
         """Calculate appropriate font size based on video resolution"""
-        # Base font size for different resolutions
+        # Base font size for different resolutions - more granular scaling
         if video_height >= 2160:  # 4K
             return 48
         elif video_height >= 1440:  # 1440p
@@ -414,26 +523,38 @@ class AudioProcessor:
             return 28
         elif video_height >= 720:   # 720p
             return 20
-        elif video_height >= 480:   # 480p
-            return 16
-        else:  # 360p or lower
+        elif video_height >= 576:   # PAL SD
+            return 18
+        elif video_height >= 480:   # NTSC SD (480p)
+            return 14
+        elif video_height >= 360:   # 360p
             return 12
+        else:  # 240p or lower
+            return 10
 
     def generate_ass(self, result: TranscriptionResult, video_file: Optional[str] = None, 
                      auto_resolution: bool = True, manual_font_size: int = 28) -> str:
         """Generate ASS subtitle format with adaptive font sizing"""
         
-        # Determine font size based on video resolution or manual setting
+        # Determine font size and resolution based on video or manual setting
         font_size = manual_font_size  # Default/manual setting
         margin_v = 15   # Default vertical margin
+        play_res_x = 1920  # Default resolution
+        play_res_y = 1080
         
         if auto_resolution and video_file:
             try:
                 width, height = self.get_video_resolution(video_file)
                 font_size = self.calculate_ass_font_size(height)
-                # Scale margins proportionally
-                margin_v = max(10, int(height * 0.014))  # ~1.4% of height
-                self.logger.info(f"Video resolution: {width}x{height}, using font size: {font_size}")
+                # Scale margins proportionally - adjusted for different resolutions
+                if height <= 480:
+                    margin_v = max(8, int(height * 0.025))  # 2.5% for SD
+                else:
+                    margin_v = max(10, int(height * 0.014))  # 1.4% for HD+
+                # Use actual video resolution for PlayRes
+                play_res_x = width
+                play_res_y = height
+                self.logger.info(f"Video resolution: {width}x{height}, using font size: {font_size}, margin: {margin_v}")
             except Exception as e:
                 self.logger.warning(f"Could not determine video resolution, using manual font size: {manual_font_size}")
                 font_size = manual_font_size
@@ -444,8 +565,8 @@ class AudioProcessor:
         ass_content = f"""[Script Info]
 Title: Generated Subtitles
 ScriptType: v4.00+
-PlayResX: 1920
-PlayResY: 1080
+PlayResX: {play_res_x}
+PlayResY: {play_res_y}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding

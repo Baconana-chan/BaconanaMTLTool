@@ -172,3 +172,5 @@ sample_games/
 # Translation outputs
 translated_games/
 output_*/
+
+models/

@@ -35,7 +35,7 @@ class MainWindow(QMainWindow):
         
     def setup_ui(self):
         """Setup the user interface"""
-        self.setWindowTitle("BaconanaMTL Tool v1.2")
+        self.setWindowTitle("BaconanaMTL Tool v1.2.1")
 
         # Get screen geometry
         screen = QApplication.desktop().screenGeometry()
@@ -62,25 +62,194 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         
         # Create tab widget
-        tab_widget = QTabWidget()
-        main_layout.addWidget(tab_widget)
+        self.tab_widget = QTabWidget()
+        main_layout.addWidget(self.tab_widget)
+        
+        # Tab configuration - defines all available tabs
+        self.tab_configs = {
+            'config': {'name': '⚙️ Config', 'setup_func': self.setup_config_tab, 'default_visible': True},
+            'translation': {'name': '🌐 Translation', 'setup_func': self.setup_translation_tab, 'default_visible': True},
+            'lightnovel': {'name': '📚 Light Novel', 'setup_func': self.setup_lightnovel_tab, 'default_visible': True},
+            'audio': {'name': '🎵 Audio & Subtitles', 'setup_func': self.setup_audio_tab, 'default_visible': False},
+            'character': {'name': '👥 Character Generator', 'setup_func': self.setup_character_tab, 'default_visible': False},
+            'novel': {'name': '📝 Novel Writing', 'setup_func': self.setup_novel_writing_tab, 'default_visible': False},
+            'local': {'name': '🖥️ Local Models', 'setup_func': self.setup_local_models_tab, 'default_visible': False},
+            'cloud': {'name': '☁️ Cloud AI', 'setup_func': self.setup_cloud_tab, 'default_visible': False},
+            'providers': {'name': '🔄 Providers', 'setup_func': self.setup_providers_tab, 'default_visible': True},
+            'advanced': {'name': '🔧 Advanced', 'setup_func': self.setup_advanced_tab, 'default_visible': False},
+            'settings': {'name': '🎛️ Tab Settings', 'setup_func': self.setup_tab_settings_tab, 'default_visible': True},
+            'documentation': {'name': '📖 Documentation', 'setup_func': self.setup_documentation_tab, 'default_visible': True},
+            'about': {'name': 'ℹ️ About', 'setup_func': self.setup_about_tab, 'default_visible': True},
+            'log': {'name': '📋 Log', 'setup_func': self.setup_log_tab, 'default_visible': True}
+        }
         
         # Create tabs
-        self.setup_config_tab(tab_widget)
-        self.setup_translation_tab(tab_widget)
-        self.setup_lightnovel_tab(tab_widget)
-        self.setup_audio_tab(tab_widget)
-        self.setup_character_tab(tab_widget)
-        self.setup_novel_writing_tab(tab_widget)
-        self.setup_cloud_tab(tab_widget)
-        self.setup_providers_tab(tab_widget)
-        self.setup_advanced_tab(tab_widget)
-        self.setup_documentation_tab(tab_widget)
-        self.setup_about_tab(tab_widget)
-        self.setup_log_tab(tab_widget)
+        self.create_tabs()
+        
         
         # Status bar
         self.statusBar().showMessage("Ready to translate!")
+
+    def create_tabs(self):
+        """Create tabs based on visibility settings"""
+        try:
+            # Clear existing tabs
+            self.tab_widget.clear()
+            
+            # Load tab visibility settings
+            visible_tabs = self.load_tab_visibility_settings()
+            
+            # Create visible tabs in order
+            for tab_id, tab_config in self.tab_configs.items():
+                is_visible = visible_tabs.get(tab_id, tab_config['default_visible'])
+                if is_visible:
+                    try:
+                        tab_config['setup_func'](self.tab_widget)
+                    except Exception as e:
+                        print(f"Error creating tab {tab_id}: {e}")
+                        # Continue with other tabs even if one fails
+                        
+        except Exception as e:
+            print(f"Error in create_tabs: {e}")
+            # Fallback: create essential tabs
+            self.setup_config_tab(self.tab_widget)
+            self.setup_translation_tab(self.tab_widget)
+            self.setup_tab_settings_tab(self.tab_widget)
+
+    def setup_tab_settings_tab(self, tab_widget):
+        """Setup tab for managing tab visibility"""
+        settings_widget = QWidget()
+        layout = QVBoxLayout(settings_widget)
+        
+        # Header
+        header_label = QLabel("🎛️ Tab Visibility Settings")
+        header_label.setFont(QFont("Arial", 16, QFont.Bold))
+        header_label.setStyleSheet("color: #2196F3; margin: 10px 0px;")
+        layout.addWidget(header_label)
+        
+        # Description
+        desc_label = QLabel("Choose which tabs to display in the interface. Hide unused tabs to reduce clutter.")
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #666; margin-bottom: 15px;")
+        layout.addWidget(desc_label)
+        
+        # Tab settings group
+        tab_group = QGroupBox("📑 Available Tabs")
+        tab_layout = QGridLayout(tab_group)
+        
+        self.tab_checkboxes = {}
+        config = self.config_manager.get_config()
+        visible_tabs = config.get('visible_tabs', {})
+        
+        row = 0
+        col = 0
+        for tab_id, tab_config in self.tab_configs.items():
+            if tab_id == 'settings':  # Don't allow hiding the settings tab itself
+                continue
+                
+            checkbox = QCheckBox(tab_config['name'])
+            is_visible = visible_tabs.get(tab_id, tab_config['default_visible'])
+            checkbox.setChecked(is_visible)
+            # Remove auto-apply to prevent constant reloading
+            # checkbox.stateChanged.connect(self.on_tab_visibility_changed)
+            
+            tab_layout.addWidget(checkbox, row, col)
+            self.tab_checkboxes[tab_id] = checkbox
+            
+            col += 1
+            if col >= 2:  # Two columns
+                col = 0
+                row += 1
+        
+        layout.addWidget(tab_group)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        reset_btn = QPushButton("🔄 Reset to Defaults")
+        reset_btn.clicked.connect(self.reset_tab_visibility)
+        reset_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; padding: 8px; }")
+        button_layout.addWidget(reset_btn)
+        
+        apply_btn = QPushButton("✅ Apply Changes")
+        apply_btn.clicked.connect(self.apply_tab_changes)
+        apply_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 8px; font-weight: bold; }")
+        button_layout.addWidget(apply_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        # Warning
+        warning_label = QLabel("⚠️ Note: Click 'Apply Changes' to save and refresh the interface.")
+        warning_label.setStyleSheet("color: #FF9800; font-style: italic; margin-top: 10px;")
+        layout.addWidget(warning_label)
+        
+        layout.addStretch()
+        
+        tab_widget.addTab(settings_widget, "🎛️ Tab Settings")
+
+    def load_tab_visibility_settings(self):
+        """Load tab visibility settings from config"""
+        config = self.config_manager.get_config()
+        return config.get('visible_tabs', {})
+
+    def save_tab_visibility_settings(self, visible_tabs):
+        """Save tab visibility settings to config"""
+        config = self.config_manager.get_config()
+        config['visible_tabs'] = visible_tabs
+        self.config_manager.save_config(config)
+
+    def on_tab_visibility_changed(self):
+        """Called when a tab visibility checkbox is changed - no longer auto-applies"""
+        pass  # Removed auto-apply functionality
+
+    def reset_tab_visibility(self):
+        """Reset tab visibility to defaults"""
+        for tab_id, checkbox in self.tab_checkboxes.items():
+            default_visible = self.tab_configs[tab_id]['default_visible']
+            checkbox.setChecked(default_visible)
+        
+        self.statusBar().showMessage("Tab settings reset to defaults. Click 'Apply Changes' to save.", 3000)
+
+    def apply_tab_changes(self):
+        """Apply tab visibility changes"""
+        try:
+            # Show loading message
+            self.statusBar().showMessage("Applying tab changes...")
+            
+            # Save visibility settings
+            visible_tabs = {}
+            for tab_id, checkbox in self.tab_checkboxes.items():
+                visible_tabs[tab_id] = checkbox.isChecked()
+            
+            # Always keep settings tab visible
+            visible_tabs['settings'] = True
+            
+            # Save to config
+            self.save_tab_visibility_settings(visible_tabs)
+            
+            # Remember current tab
+            current_index = self.tab_widget.currentIndex()
+            current_tab_text = self.tab_widget.tabText(current_index) if current_index >= 0 else ""
+            
+            # Recreate tabs
+            self.create_tabs()
+            
+            # Try to restore current tab
+            for i in range(self.tab_widget.count()):
+                if self.tab_widget.tabText(i) == current_tab_text:
+                    self.tab_widget.setCurrentIndex(i)
+                    break
+            
+            self.statusBar().showMessage("Tab visibility updated successfully!", 3000)
+            
+        except Exception as e:
+            self.statusBar().showMessage(f"Error applying changes: {str(e)}", 5000)
+            print(f"Error in apply_tab_changes: {e}")
+            
+    def get_current_tab_visibility(self):
+        """Get current tab visibility settings"""
+        return self.load_tab_visibility_settings()
         
     def setup_config_tab(self, tab_widget):
         """Setup configuration tab"""
@@ -732,6 +901,33 @@ class MainWindow(QMainWindow):
         
         scroll_layout.addWidget(file_group)
         
+        # Audio Settings Presets Group
+        preset_group = QGroupBox("🎯 Audio Settings Presets")
+        preset_layout = QGridLayout(preset_group)
+        
+        preset_layout.addWidget(QLabel("Quick Presets:"), 0, 0)
+        self.audio_preset_combo = QComboBox()
+        self.audio_preset_combo.addItems([
+            "Custom Settings",
+            "🎬 General Audio (Balanced)",
+            "🎭 Anime/Voiced Content (NSFW-Safe)",
+            "🎤 Podcast/Interview (Voice-Only)",
+            "🎵 Music/Song Transcription",
+            "🔊 Low Quality Audio",
+            "⚡ Fast Processing",
+            "🎯 High Accuracy"
+        ])
+        self.audio_preset_combo.currentTextChanged.connect(self.apply_audio_preset)
+        preset_layout.addWidget(self.audio_preset_combo, 0, 1)
+        
+        # Preset description
+        self.preset_description = QLabel("Select a preset to automatically configure optimal settings for your content type.")
+        self.preset_description.setWordWrap(True)
+        self.preset_description.setStyleSheet("color: #666; font-style: italic; margin: 5px 0px;")
+        preset_layout.addWidget(self.preset_description, 1, 0, 1, 2)
+        
+        scroll_layout.addWidget(preset_group)
+        
         # Transcription Provider Group
         provider_group = QGroupBox("🤖 Transcription Provider")
         provider_layout = QGridLayout(provider_group)
@@ -757,7 +953,8 @@ class MainWindow(QMainWindow):
             "Faster-Whisper Small (Free)",
             "Faster-Whisper Medium (Free)",
             "Faster-Whisper Large-V1 (Free)",
-            "Faster-Whisper Large-V2 (Free)"
+            "Faster-Whisper Large-V2 (Free)",
+            "Anime-Whisper (Free, Anime/NSFW Optimized)"
         ])
         self.audio_provider_combo.currentTextChanged.connect(self.update_transcription_cost)
         provider_layout.addWidget(self.audio_provider_combo, 0, 1)
@@ -793,7 +990,8 @@ class MainWindow(QMainWindow):
             "small (244 MB)",
             "medium (769 MB)",
             "large-v1 (1550 MB)",
-            "large-v2 (1550 MB)"
+            "large-v2 (1550 MB)",
+            "anime-whisper (~300 MB, Anime/NSFW Optimized)"
         ])
         download_layout.addWidget(self.model_download_combo)
         
@@ -896,7 +1094,16 @@ class MainWindow(QMainWindow):
         self.subtitle_format_combo.currentTextChanged.connect(self.on_subtitle_format_changed)
         subtitle_layout.addWidget(self.subtitle_format_combo, 0, 1)
         
-        # ASS Settings (hidden by default)
+        subtitle_layout.addWidget(QLabel("Output Directory:"), 1, 0)
+        self.subtitle_output_edit = QLineEdit()
+        self.subtitle_output_edit.setPlaceholderText("Leave empty to save in same folder as input file...")
+        subtitle_layout.addWidget(self.subtitle_output_edit, 1, 1)
+        
+        self.subtitle_browse_btn = QPushButton("Browse")
+        self.subtitle_browse_btn.clicked.connect(self.browse_subtitle_output)
+        subtitle_layout.addWidget(self.subtitle_browse_btn, 1, 2)
+        
+        # ASS Settings (hidden by default) - in separate row to avoid overlap
         self.ass_settings_group = QGroupBox("🎨 ASS Subtitle Settings")
         ass_settings_layout = QGridLayout(self.ass_settings_group)
         
@@ -906,37 +1113,23 @@ class MainWindow(QMainWindow):
         self.auto_resolution_check.setToolTip("Automatically detect video resolution and adjust font size")
         ass_settings_layout.addWidget(self.auto_resolution_check, 0, 1)
         
-        ass_settings_layout.addWidget(QLabel("Manual font size:"), 1, 0)
+        ass_settings_layout.addWidget(QLabel("Manual font size:"), 0, 2)
         self.manual_font_spin = QSpinBox()
         self.manual_font_spin.setRange(8, 72)
         self.manual_font_spin.setValue(28)
         self.manual_font_spin.setEnabled(False)
         self.manual_font_spin.setToolTip("Manual font size (used when auto-detection is disabled)")
-        ass_settings_layout.addWidget(self.manual_font_spin, 1, 1)
+        ass_settings_layout.addWidget(self.manual_font_spin, 0, 3)
         
         self.auto_resolution_check.toggled.connect(lambda checked: self.manual_font_spin.setEnabled(not checked))
         
-        subtitle_layout.addWidget(self.ass_settings_group, 0, 2, 2, 1)
+        subtitle_layout.addWidget(self.ass_settings_group, 2, 0, 1, 3)
         self.ass_settings_group.setVisible(False)  # Hidden by default
         
-        subtitle_layout.addWidget(QLabel("Output Directory:"), 1, 0)
-        self.subtitle_output_edit = QLineEdit()
-        self.subtitle_output_edit.setPlaceholderText("Select output directory...")
-        subtitle_layout.addWidget(self.subtitle_output_edit, 1, 1)
-        
-        self.subtitle_browse_btn = QPushButton("Browse")
-        self.subtitle_browse_btn.clicked.connect(self.browse_subtitle_output)
-        subtitle_layout.addWidget(self.subtitle_browse_btn, 1, 2)
-        
         self.save_raw_check = QCheckBox("Save raw transcription text file")
-        subtitle_layout.addWidget(self.save_raw_check, 2, 0, 1, 3)
+        subtitle_layout.addWidget(self.save_raw_check, 3, 0, 1, 3)
         
         scroll_layout.addWidget(subtitle_group)
-        
-    def on_subtitle_format_changed(self):
-        """Show/hide ASS settings based on selected format"""
-        is_ass = self.subtitle_format_combo.currentText() == "ASS"
-        self.ass_settings_group.setVisible(is_ass)
         
         # Action Buttons
         action_layout = QHBoxLayout()
@@ -985,11 +1178,270 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         layout.addWidget(scroll)
         
+        # Dependencies warning group
+        self.deps_warning_group = QGroupBox("⚠️ Dependencies Status")
+        deps_layout = QVBoxLayout(self.deps_warning_group)
+        
+        # Header with hide button
+        deps_header_layout = QHBoxLayout()
+        deps_title = QLabel("⚠️ Dependencies Status")
+        deps_title.setStyleSheet("font-weight: bold; color: #FF9800;")
+        deps_header_layout.addWidget(deps_title)
+        
+        self.hide_deps_btn = QPushButton("✕")
+        self.hide_deps_btn.clicked.connect(lambda: self.deps_warning_group.setVisible(False))
+        self.hide_deps_btn.setMaximumSize(25, 25)
+        self.hide_deps_btn.setStyleSheet("QPushButton { background-color: #ccc; border: none; border-radius: 12px; }")
+        self.hide_deps_btn.setToolTip("Hide dependencies warning")
+        deps_header_layout.addWidget(self.hide_deps_btn)
+        deps_layout.addLayout(deps_header_layout)
+        
+        self.deps_warning_label = QLabel()
+        self.deps_warning_label.setWordWrap(True)
+        self.deps_warning_label.setStyleSheet("color: #FF9800; font-weight: bold;")
+        deps_layout.addWidget(self.deps_warning_label)
+        
+        button_layout = QHBoxLayout()
+        self.install_deps_btn = QPushButton("📦 Install Missing Dependencies")
+        self.install_deps_btn.clicked.connect(self.show_dependency_install_dialog)
+        self.install_deps_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; padding: 8px; }")
+        button_layout.addWidget(self.install_deps_btn)
+        
+        self.recheck_deps_btn = QPushButton("🔄 Recheck Dependencies")
+        self.recheck_deps_btn.clicked.connect(self.recheck_dependencies)
+        self.recheck_deps_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; padding: 8px; }")
+        button_layout.addWidget(self.recheck_deps_btn)
+        deps_layout.addLayout(button_layout)
+        
+        layout.addWidget(self.deps_warning_group)
+        self.deps_warning_group.setVisible(False)  # Hidden by default
+        
         # Initialize audio processor
         self.audio_processor = None
+        self.init_audio_processor()
         self.update_installed_models()
         
         tab_widget.addTab(audio_widget, "🎵 Audio & Subtitles")
+
+    def on_subtitle_format_changed(self):
+        """Show/hide ASS settings based on selected format"""
+        is_ass = self.subtitle_format_combo.currentText() == "ASS"
+        self.ass_settings_group.setVisible(is_ass)
+
+    def init_audio_processor(self):
+        """Initialize audio processor and check dependencies"""
+        try:
+            from core.audio_processor import AudioProcessor
+            self.audio_processor = AudioProcessor(self.config_manager)
+            self.check_audio_dependencies()
+        except Exception as e:
+            self.log_message(f"Error initializing audio processor: {e}")
+
+    def check_audio_dependencies(self):
+        """Check and display warnings for missing audio dependencies"""
+        if not self.audio_processor:
+            return
+        
+        missing_deps = self.audio_processor.get_missing_dependencies()
+        
+        if missing_deps:
+            # Show warning
+            warning_text = "⚠️ Some features may not work due to missing dependencies:\n\n"
+            deps_info = self.audio_processor.check_dependencies()
+            
+            for dep in missing_deps:
+                if dep in deps_info:
+                    info = deps_info[dep]
+                    warning_text += f"• {dep}: {info['description']}\n"
+                    warning_text += f"  Install with: {info['install_command']}\n\n"
+            
+            self.deps_warning_label.setText(warning_text)
+            self.deps_warning_group.setVisible(True)
+            
+            # Update VAD checkbox tooltip and disable if needed
+            if hasattr(self, 'vad_filter_check'):
+                if not self.audio_processor.can_use_vad_filter():
+                    self.vad_filter_check.setEnabled(False)
+                    self.vad_filter_check.setChecked(False)
+                    self.vad_filter_check.setToolTip("VAD filter requires onnxruntime package. Install it to enable this feature.")
+                else:
+                    self.vad_filter_check.setEnabled(True)
+                    self.vad_filter_check.setToolTip("Filter out non-speech segments.")
+        else:
+            # All dependencies available
+            self.deps_warning_group.setVisible(False)
+            if hasattr(self, 'vad_filter_check'):
+                self.vad_filter_check.setEnabled(True)
+                self.vad_filter_check.setToolTip("Filter out non-speech segments.")
+
+    def show_dependency_install_dialog(self):
+        """Show dialog with dependency installation instructions"""
+        if not self.audio_processor:
+            return
+        
+        missing_deps = self.audio_processor.get_missing_dependencies()
+        if not missing_deps:
+            return
+        
+        deps_info = self.audio_processor.check_dependencies()
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Install Missing Dependencies")
+        dialog.setModal(True)
+        dialog.resize(600, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Header
+        header = QLabel("📦 Missing Dependencies Installation")
+        header.setFont(QFont("Arial", 14, QFont.Bold))
+        header.setStyleSheet("color: #FF9800; margin-bottom: 10px;")
+        layout.addWidget(header)
+        
+        # Instructions
+        instructions = QLabel("To install missing dependencies, run these commands in your terminal:")
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+        
+        # Commands text area
+        commands_text = QTextEdit()
+        commands_text.setReadOnly(True)
+        commands_text.setMaximumHeight(200)
+        
+        commands = []
+        for dep in missing_deps:
+            if dep in deps_info:
+                commands.append(deps_info[dep]['install_command'])
+        
+        commands_text.setPlainText('\n'.join(commands))
+        layout.addWidget(commands_text)
+        
+        # Copy button
+        copy_btn = QPushButton("📋 Copy Commands")
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText('\n'.join(commands)))
+        copy_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; padding: 8px; }")
+        layout.addWidget(copy_btn)
+        
+        # Note
+        note = QLabel("⚠️ Note: Restart the application after installing dependencies.")
+        note.setStyleSheet("color: #FF9800; font-style: italic; margin-top: 10px;")
+        layout.addWidget(note)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        
+        dialog.exec_()
+
+    def recheck_dependencies(self):
+        """Recheck dependencies after installation"""
+        # Reload the audio processor module to get fresh import status
+        import importlib
+        import core.audio_processor
+        importlib.reload(core.audio_processor)
+        
+        # Reinitialize audio processor
+        self.audio_processor = None
+        self.init_audio_processor()
+        
+        # Update the status
+        self.statusBar().showMessage("Dependencies rechecked!")
+
+    def apply_audio_preset(self):
+        """Apply selected audio preset settings"""
+        preset = self.audio_preset_combo.currentText()
+        
+        if preset == "Custom Settings":
+            self.preset_description.setText("Custom settings - configure manually below.")
+            return
+        
+        # Define preset configurations
+        presets = {
+            "🎬 General Audio (Balanced)": {
+                "provider": "Faster-Whisper Base (Free)",
+                "beam_size": 5,
+                "temperature": 0.0,
+                "vad_filter": True,
+                "word_timestamps": False,
+                "description": "Balanced settings for general audio content like movies, podcasts, interviews."
+            },
+            "🎭 Anime/Voiced Content (NSFW-Safe)": {
+                "provider": "Anime-Whisper (Free, Anime/NSFW Optimized)",
+                "beam_size": 3,
+                "temperature": 0.2,
+                "vad_filter": False,  # Disabled to avoid filtering out moans/sounds
+                "word_timestamps": False,
+                "description": "Optimized for anime, games, and adult content. Reduces hallucinations from background sounds."
+            },
+            "🎤 Podcast/Interview (Voice-Only)": {
+                "provider": "Faster-Whisper Medium (Free)",
+                "beam_size": 5,
+                "temperature": 0.0,
+                "vad_filter": True,
+                "word_timestamps": True,
+                "description": "High accuracy for clear speech content with voice activity detection."
+            },
+            "🎵 Music/Song Transcription": {
+                "provider": "Faster-Whisper Large-V2 (Free)",
+                "beam_size": 10,
+                "temperature": 0.3,
+                "vad_filter": False,
+                "word_timestamps": True,
+                "description": "For transcribing lyrics from songs. Higher beam size for better accuracy."
+            },
+            "🔊 Low Quality Audio": {
+                "provider": "Faster-Whisper Large-V2 (Free)",
+                "beam_size": 8,
+                "temperature": 0.1,
+                "vad_filter": True,
+                "word_timestamps": False,
+                "description": "Enhanced settings for poor quality or noisy audio recordings."
+            },
+            "⚡ Fast Processing": {
+                "provider": "Faster-Whisper Tiny (Free)",
+                "beam_size": 1,
+                "temperature": 0.0,
+                "vad_filter": True,
+                "word_timestamps": False,
+                "description": "Fastest processing with minimal accuracy trade-off. Good for quick previews."
+            },
+            "🎯 High Accuracy": {
+                "provider": "Faster-Whisper Large-V2 (Free)",
+                "beam_size": 10,
+                "temperature": 0.0,
+                "vad_filter": True,
+                "word_timestamps": True,
+                "description": "Maximum accuracy settings. Slower processing but best results."
+            }
+        }
+        
+        if preset in presets:
+            config = presets[preset]
+            
+            # Apply provider setting
+            provider_text = config["provider"]
+            provider_index = self.audio_provider_combo.findText(provider_text)
+            if provider_index >= 0:
+                self.audio_provider_combo.setCurrentIndex(provider_index)
+            
+            # Apply local model settings if available
+            if hasattr(self, 'beam_size_spin'):
+                self.beam_size_spin.setValue(config["beam_size"])
+            if hasattr(self, 'temperature_spin'):
+                self.temperature_spin.setValue(config["temperature"])
+            if hasattr(self, 'vad_filter_check'):
+                self.vad_filter_check.setChecked(config["vad_filter"])
+            if hasattr(self, 'word_timestamps_check'):
+                self.word_timestamps_check.setChecked(config["word_timestamps"])
+            
+            # Update description
+            self.preset_description.setText(config["description"])
+            
+            # Show/hide local settings based on provider
+            is_local = "Faster-Whisper" in provider_text or "Anime-Whisper" in provider_text
+            if hasattr(self, 'local_settings_group'):
+                self.local_settings_group.setVisible(is_local)
     
     def setup_character_tab(self, tab_widget):
         """Setup character generator tab"""
@@ -2283,6 +2735,14 @@ class MainWindow(QMainWindow):
     def load_config(self):
         """Load configuration into UI"""
         config = self.config_manager.get_config()
+        
+        # Initialize tab visibility settings if not present
+        if 'visible_tabs' not in config:
+            default_visible = {}
+            for tab_id, tab_config in self.tab_configs.items():
+                default_visible[tab_id] = tab_config['default_visible']
+            config['visible_tabs'] = default_visible
+            self.config_manager.save_config(config)
         
         self.api_url_edit.setText(config.get('api', ''))
         self.api_key_edit.setText(config.get('key', ''))
@@ -4449,7 +4909,7 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
         
         <div class="version">
             <h3>📋 Version Information</h3>
-            <p><strong>Version:</strong> 1.2</p>
+            <p><strong>Version:</strong> 1.2.1</p>
             <p><strong>Release Date:</strong> September 2025</p>
         </div>
         
@@ -4623,6 +5083,9 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                 self.installed_models_list.setText("\n".join([f"✓ {model}" for model in installed]))
             else:
                 self.installed_models_list.setText("No local models installed")
+                
+            # Also check dependencies when updating models
+            self.check_audio_dependencies()
         except Exception as e:
             self.installed_models_list.setText(f"Error checking models: {str(e)}")
 
@@ -4716,9 +5179,15 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             QMessageBox.warning(self, "No Audio File", "Please select an audio file first.")
             return
         
-        if not self.subtitle_output_edit.text():
-            QMessageBox.warning(self, "No Output Directory", "Please select an output directory.")
-            return
+        # Auto-set output directory if not specified
+        output_dir = self.subtitle_output_edit.text()
+        if not output_dir:
+            # Use the same directory as the input file
+            import os
+            audio_file_path = self.audio_file_edit.text()
+            output_dir = os.path.dirname(audio_file_path)
+            self.subtitle_output_edit.setText(output_dir)
+            self.log_message(f"Auto-set output directory to: {output_dir}")
         
         try:
             self.transcribe_btn.setEnabled(False)
