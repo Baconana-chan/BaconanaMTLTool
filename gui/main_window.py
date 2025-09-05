@@ -35,7 +35,7 @@ class MainWindow(QMainWindow):
         
     def setup_ui(self):
         """Setup the user interface"""
-        self.setWindowTitle("BaconanaMTL Tool v1.2.1")
+        self.setWindowTitle("BaconanaMTL Tool v1.2.2")
 
         # Get screen geometry
         screen = QApplication.desktop().screenGeometry()
@@ -1081,6 +1081,44 @@ class MainWindow(QMainWindow):
         self.word_timestamps_check.setToolTip("Generate timestamps for individual words.")
         local_settings_layout.addWidget(self.word_timestamps_check, 2, 2, 1, 2)
         
+        # Anti-duplication settings - Row 3
+        self.repetition_penalty_label = QLabel("Repetition Penalty:")
+        local_settings_layout.addWidget(self.repetition_penalty_label, 3, 0)
+        
+        self.repetition_penalty_spin = QDoubleSpinBox()
+        self.repetition_penalty_spin.setRange(1.0, 2.0)
+        self.repetition_penalty_spin.setSingleStep(0.1)
+        self.repetition_penalty_spin.setValue(1.1)
+        self.repetition_penalty_spin.setDecimals(1)
+        self.repetition_penalty_spin.setToolTip("Higher values discourage repetition (1.0 = no penalty, 1.1-1.2 recommended)")
+        local_settings_layout.addWidget(self.repetition_penalty_spin, 3, 1)
+        
+        self.compression_ratio_label = QLabel("Compression Ratio Threshold:")
+        local_settings_layout.addWidget(self.compression_ratio_label, 3, 2)
+        
+        self.compression_ratio_spin = QDoubleSpinBox()
+        self.compression_ratio_spin.setRange(1.0, 4.0)
+        self.compression_ratio_spin.setSingleStep(0.1)
+        self.compression_ratio_spin.setValue(2.4)
+        self.compression_ratio_spin.setDecimals(1)
+        self.compression_ratio_spin.setToolTip("Filter segments with low compression ratio (higher = stricter filtering)")
+        local_settings_layout.addWidget(self.compression_ratio_spin, 3, 3)
+        
+        # Row 4 - Additional anti-duplication options
+        self.no_repeat_ngram_label = QLabel("No Repeat N-gram Size:")
+        local_settings_layout.addWidget(self.no_repeat_ngram_label, 4, 0)
+        
+        self.no_repeat_ngram_spin = QSpinBox()
+        self.no_repeat_ngram_spin.setRange(0, 5)
+        self.no_repeat_ngram_spin.setValue(2)
+        self.no_repeat_ngram_spin.setToolTip("Prevent repetition of n-grams (0 = disabled, 2-3 recommended)")
+        local_settings_layout.addWidget(self.no_repeat_ngram_spin, 4, 1)
+        
+        self.condition_on_previous_check = QCheckBox("Condition on Previous Text")
+        self.condition_on_previous_check.setChecked(False)
+        self.condition_on_previous_check.setToolTip("Use previous text as context (disable to reduce repetition)")
+        local_settings_layout.addWidget(self.condition_on_previous_check, 4, 2, 1, 2)
+        
         scroll_layout.addWidget(self.local_settings_group)
         self.local_settings_group.setVisible(False)  # Hidden by default
         
@@ -1364,7 +1402,11 @@ class MainWindow(QMainWindow):
                 "temperature": 0.0,
                 "vad_filter": True,
                 "word_timestamps": False,
-                "description": "Balanced settings for general audio content like movies, podcasts, interviews."
+                "repetition_penalty": 1.1,
+                "compression_ratio_threshold": 2.4,
+                "no_repeat_ngram_size": 2,
+                "condition_on_previous_text": False,
+                "description": "Balanced settings for general audio content like movies, podcasts, interviews. Anti-duplication enabled."
             },
             "🎭 Anime/Voiced Content (NSFW-Safe)": {
                 "provider": "Anime-Whisper (Free, Anime/NSFW Optimized)",
@@ -1372,7 +1414,11 @@ class MainWindow(QMainWindow):
                 "temperature": 0.2,
                 "vad_filter": False,  # Disabled to avoid filtering out moans/sounds
                 "word_timestamps": False,
-                "description": "Optimized for anime, games, and adult content. Reduces hallucinations from background sounds."
+                "repetition_penalty": 1.2,
+                "compression_ratio_threshold": 2.0,
+                "no_repeat_ngram_size": 3,
+                "condition_on_previous_text": False,
+                "description": "Optimized for anime, games, and adult content. Aggressive anti-duplication for repeated sounds/phrases."
             },
             "🎤 Podcast/Interview (Voice-Only)": {
                 "provider": "Faster-Whisper Medium (Free)",
@@ -1380,7 +1426,11 @@ class MainWindow(QMainWindow):
                 "temperature": 0.0,
                 "vad_filter": True,
                 "word_timestamps": True,
-                "description": "High accuracy for clear speech content with voice activity detection."
+                "repetition_penalty": 1.1,
+                "compression_ratio_threshold": 2.4,
+                "no_repeat_ngram_size": 2,
+                "condition_on_previous_text": True,
+                "description": "High accuracy for clear speech content with voice activity detection and context awareness."
             },
             "🎵 Music/Song Transcription": {
                 "provider": "Faster-Whisper Large-V2 (Free)",
@@ -1388,7 +1438,11 @@ class MainWindow(QMainWindow):
                 "temperature": 0.3,
                 "vad_filter": False,
                 "word_timestamps": True,
-                "description": "For transcribing lyrics from songs. Higher beam size for better accuracy."
+                "repetition_penalty": 1.0,
+                "compression_ratio_threshold": 1.8,
+                "no_repeat_ngram_size": 0,
+                "condition_on_previous_text": True,
+                "description": "For transcribing lyrics from songs. Allows repetition for chorus/verses."
             },
             "🔊 Low Quality Audio": {
                 "provider": "Faster-Whisper Large-V2 (Free)",
@@ -1396,7 +1450,11 @@ class MainWindow(QMainWindow):
                 "temperature": 0.1,
                 "vad_filter": True,
                 "word_timestamps": False,
-                "description": "Enhanced settings for poor quality or noisy audio recordings."
+                "repetition_penalty": 1.2,
+                "compression_ratio_threshold": 2.8,
+                "no_repeat_ngram_size": 3,
+                "condition_on_previous_text": False,
+                "description": "Enhanced settings for poor quality or noisy audio. Strong anti-duplication filters."
             },
             "⚡ Fast Processing": {
                 "provider": "Faster-Whisper Tiny (Free)",
@@ -1404,12 +1462,24 @@ class MainWindow(QMainWindow):
                 "temperature": 0.0,
                 "vad_filter": True,
                 "word_timestamps": False,
-                "description": "Fastest processing with minimal accuracy trade-off. Good for quick previews."
+                "repetition_penalty": 1.1,
+                "compression_ratio_threshold": 2.4,
+                "no_repeat_ngram_size": 2,
+                "condition_on_previous_text": False,
+                "description": "Fastest processing with minimal accuracy trade-off. Basic anti-duplication."
             },
             "🎯 High Accuracy": {
                 "provider": "Faster-Whisper Large-V2 (Free)",
                 "beam_size": 10,
                 "temperature": 0.0,
+                "vad_filter": True,
+                "word_timestamps": True,
+                "repetition_penalty": 1.1,
+                "compression_ratio_threshold": 2.4,
+                "no_repeat_ngram_size": 2,
+                "condition_on_previous_text": True,
+                "description": "Maximum accuracy settings with balanced anti-duplication. Slower processing but best results."
+            },
                 "vad_filter": True,
                 "word_timestamps": True,
                 "description": "Maximum accuracy settings. Slower processing but best results."
@@ -1434,6 +1504,16 @@ class MainWindow(QMainWindow):
                 self.vad_filter_check.setChecked(config["vad_filter"])
             if hasattr(self, 'word_timestamps_check'):
                 self.word_timestamps_check.setChecked(config["word_timestamps"])
+            
+            # Apply anti-duplication settings
+            if hasattr(self, 'repetition_penalty_spin'):
+                self.repetition_penalty_spin.setValue(config.get("repetition_penalty", 1.1))
+            if hasattr(self, 'compression_ratio_spin'):
+                self.compression_ratio_spin.setValue(config.get("compression_ratio_threshold", 2.4))
+            if hasattr(self, 'no_repeat_ngram_spin'):
+                self.no_repeat_ngram_spin.setValue(config.get("no_repeat_ngram_size", 2))
+            if hasattr(self, 'condition_on_previous_check'):
+                self.condition_on_previous_check.setChecked(config.get("condition_on_previous_text", False))
             
             # Update description
             self.preset_description.setText(config["description"])
@@ -4909,7 +4989,7 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
         
         <div class="version">
             <h3>📋 Version Information</h3>
-            <p><strong>Version:</strong> 1.2.1</p>
+            <p><strong>Version:</strong> 1.2.2</p>
             <p><strong>Release Date:</strong> September 2025</p>
         </div>
         
@@ -5032,8 +5112,8 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             provider_text = self.audio_provider_combo.currentText()
             
             # Show/hide local model settings based on provider
-            is_faster_whisper = "Faster-Whisper" in provider_text
-            self.local_settings_group.setVisible(is_faster_whisper)
+            is_local_model = "Faster-Whisper" in provider_text or "Anime-Whisper" in provider_text
+            self.local_settings_group.setVisible(is_local_model)
             
             provider_map = {
                 "OpenAI Whisper": "openai-whisper",
@@ -5047,7 +5127,8 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                 "Speechmatics": "speechmatics",
                 "Gladia": "gladia",
                 "Azure AI Speech Batch": "azure-ai-speech-batch",
-                "Azure AI Speech Realtime": "azure-ai-speech-realtime"
+                "Azure AI Speech Realtime": "azure-ai-speech-realtime",
+                "Anime-Whisper": "anime-whisper"
             }
             
             provider_key = None
@@ -5218,8 +5299,8 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                         def progress_callback(percent, message):
                             self.progress_updated.emit(percent, message)
                         
-                        # Add progress callback to options if using faster-whisper
-                        if "Faster-Whisper" in self.provider:
+                        # Add progress callback to options if using local models
+                        if "Faster-Whisper" in self.provider or "Anime-Whisper" in self.provider:
                             self.options['progress_callback'] = progress_callback
                         
                         # Determine provider
@@ -5244,10 +5325,12 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                                 model_name = "base"  # default fallback
                             
                             provider_key = f"faster-whisper-{model_name}"
+                        elif "Anime-Whisper" in provider_text:
+                            provider_key = "anime-whisper"
                         else:
                             raise ValueError(f"Unsupported provider: {provider_text}")
                         
-                        if "Faster-Whisper" not in provider_text:
+                        if "Faster-Whisper" not in provider_text and "Anime-Whisper" not in provider_text:
                             self.progress_updated.emit(50, "Transcribing audio...")
                         
                         # Perform transcription
@@ -5277,6 +5360,12 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                 options['temperature'] = self.temperature_spin.value()
                 options['vad_filter'] = self.vad_filter_check.isChecked()
                 options['word_timestamps'] = self.word_timestamps_check.isChecked()
+                
+                # Anti-duplication settings
+                options['repetition_penalty'] = self.repetition_penalty_spin.value()
+                options['compression_ratio_threshold'] = self.compression_ratio_spin.value()
+                options['no_repeat_ngram_size'] = self.no_repeat_ngram_spin.value()
+                options['condition_on_previous_text'] = self.condition_on_previous_check.isChecked()
             
             # Start transcription thread
             self.transcription_thread = TranscriptionThread(

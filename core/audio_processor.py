@@ -31,6 +31,13 @@ try:
 except ImportError:
     ONNXRUNTIME_AVAILABLE = False
 
+try:
+    import transformers
+    import torch
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+
 from .api_client import APIClient
 from .models import TranscriptionResult, SubtitleSegment
 
@@ -131,6 +138,11 @@ class AudioProcessor:
                 "available": self._check_import("onnxruntime"),
                 "description": "Required for VAD (Voice Activity Detection) filter",
                 "install_command": "pip install onnxruntime"
+            },
+            "transformers": {
+                "available": self._check_import("transformers"),
+                "description": "Required for Anime-Whisper and other Hugging Face models",
+                "install_command": "pip install transformers torch"
             }
         }
         return deps
@@ -323,10 +335,113 @@ class AudioProcessor:
             self.logger.error(f"OpenAI transcription error: {e}")
             raise
 
+    def transcribe_with_anime_whisper(self, audio_file: str, model_name: str = "litagin/anime-whisper",
+                                     device: str = "auto", temperature: float = 0.0,
+                                     word_timestamps: bool = False, progress_callback=None, **kwargs) -> TranscriptionResult:
+        """Транскрипция с использованием Anime-Whisper модели через Hugging Face"""
+        try:
+            if not TRANSFORMERS_AVAILABLE:
+                raise RuntimeError("transformers library is required for Anime-Whisper. Install with: pip install transformers torch")
+            
+            from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+            import torch
+            
+            # Определяем путь к локальной модели
+            local_model_path = self.models_dir / "faster-whisper" / "anime-whisper"
+            
+            # Используем локальную модель если она существует, иначе загружаем из HuggingFace
+            if local_model_path.exists():
+                model_path = str(local_model_path)
+                self.logger.info(f"Using local Anime-Whisper model: {model_path}")
+            else:
+                model_path = model_name
+                self.logger.info(f"Using online Anime-Whisper model: {model_path}")
+            
+            # Определяем устройство
+            if device == "auto":
+                device = "cuda:0" if torch.cuda.is_available() else "cpu"
+            torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+            
+            self.logger.info(f"Loading Anime-Whisper model on {device}")
+            
+            # Загружаем модель и процессор
+            model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                model_path,
+                torch_dtype=torch_dtype,
+                low_cpu_mem_usage=True,
+                use_safetensors=True
+            )
+            model.to(device)
+            
+            processor = AutoProcessor.from_pretrained(model_path)
+            
+            # Создаем pipeline для транскрипции
+            pipe = pipeline(
+                "automatic-speech-recognition",
+                model=model,
+                tokenizer=processor.tokenizer,
+                feature_extractor=processor.feature_extractor,
+                max_new_tokens=128,
+                chunk_length_s=30,
+                batch_size=16,
+                return_timestamps=word_timestamps,
+                torch_dtype=torch_dtype,
+                device=device,
+            )
+            
+            # Подготавливаем параметры генерации
+            generate_kwargs = {}
+            if temperature is not None and temperature > 0:
+                generate_kwargs["temperature"] = float(temperature)
+            
+            self.logger.info(f"Starting Anime-Whisper transcription of: {audio_file}")
+            
+            # Выполняем транскрипцию
+            result = pipe(audio_file, generate_kwargs=generate_kwargs)
+            
+            # Преобразуем результат в наш формат
+            segments = []
+            if word_timestamps and "chunks" in result:
+                for chunk in result["chunks"]:
+                    timestamp = chunk.get('timestamp', [0, 0])
+                    start_time = timestamp[0] if len(timestamp) > 0 else 0.0
+                    end_time = timestamp[1] if len(timestamp) > 1 else start_time
+                    
+                    segments.append(TranscriptionSegment(
+                        start=start_time,
+                        end=end_time,
+                        text=chunk.get('text', '').strip()
+                    ))
+            else:
+                # Если нет временных меток, создаем один сегмент
+                segments.append(TranscriptionSegment(
+                    start=0.0,
+                    end=0.0,
+                    text=result['text'].strip()
+                ))
+            
+            # Создаем результат
+            transcription_result = TranscriptionResult(
+                text=result['text'].strip(),
+                segments=segments,
+                language='ja',  # Anime-Whisper обычно для японского
+                language_probability=0.9
+            )
+            
+            self.logger.info("Anime-Whisper transcription completed successfully")
+            return transcription_result
+            
+        except Exception as e:
+            self.logger.error(f"Anime-Whisper transcription error: {e}")
+            raise RuntimeError(f"Anime-Whisper transcription failed: {str(e)}")
+
     def transcribe_with_faster_whisper(self, audio_file: str, model_name: str = "base", 
                                       compute_type: str = "auto", device: str = "cpu",
                                       beam_size: int = 5, temperature: float = 0.0,
                                       vad_filter: bool = True, word_timestamps: bool = False,
+                                      repetition_penalty: float = 1.0, no_repeat_ngram_size: int = 0,
+                                      compression_ratio_threshold: float = 2.4, logprob_threshold: float = -1.0,
+                                      condition_on_previous_text: bool = True,
                                       progress_callback=None, **kwargs) -> TranscriptionResult:
         """Transcribe audio using local faster-whisper model"""
         if not FASTER_WHISPER_AVAILABLE:
@@ -363,8 +478,16 @@ class AudioProcessor:
             transcribe_params = {
                 "beam_size": beam_size,
                 "vad_filter": vad_filter,
-                "word_timestamps": word_timestamps
+                "word_timestamps": word_timestamps,
+                "repetition_penalty": repetition_penalty,
+                "compression_ratio_threshold": compression_ratio_threshold,
+                "logprob_threshold": logprob_threshold,
+                "condition_on_previous_text": condition_on_previous_text
             }
+            
+            # Add no_repeat_ngram_size only if it's greater than 0
+            if no_repeat_ngram_size > 0:
+                transcribe_params["no_repeat_ngram_size"] = no_repeat_ngram_size
             
             # Only add temperature if it's greater than 0
             if temperature > 0:
@@ -383,20 +506,29 @@ class AudioProcessor:
             
             if progress_callback:
                 progress_callback(30, "Processing segments...")
+
+            # Process segments and remove duplicates
+            previous_text = ""
+            duplicate_threshold = 0.8  # Similarity threshold for duplicate detection
             
             for i, segment in enumerate(segments):
                 # Ensure start and end are valid numbers
                 segment_start = segment.start if segment.start is not None else 0.0
                 segment_end = segment.end if segment.end is not None else segment_start + 1.0
+                current_text = segment.text.strip()
+                
+                # Skip if text is very similar to previous segment
+                if previous_text and self._text_similarity(current_text, previous_text) > duplicate_threshold:
+                    self.logger.debug(f"Skipping duplicate segment: '{current_text}'")
+                    continue
                 
                 subtitle_segments.append(SubtitleSegment(
                     start=segment_start,
                     end=segment_end,
-                    text=segment.text.strip()
+                    text=current_text
                 ))
-                full_text += segment.text + " "
-                
-                # Update progress based on processed audio duration
+                full_text += current_text + " "
+                previous_text = current_text                # Update progress based on processed audio duration
                 processed_duration = segment_end
                 if progress_callback and i % 10 == 0:  # Update every 10 segments
                     elapsed_time = time.time() - start_time
@@ -437,17 +569,60 @@ class AudioProcessor:
             self.logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
+    def _text_similarity(self, text1: str, text2: str) -> float:
+        """Calculate similarity between two text strings using simple character-based comparison"""
+        if not text1 or not text2:
+            return 0.0
+        
+        # Normalize texts (remove extra spaces, convert to lowercase)
+        norm_text1 = " ".join(text1.lower().split())
+        norm_text2 = " ".join(text2.lower().split())
+        
+        if norm_text1 == norm_text2:
+            return 1.0
+        
+        # Calculate similarity using character overlap
+        set1 = set(norm_text1)
+        set2 = set(norm_text2)
+        
+        if not set1 and not set2:
+            return 1.0
+        if not set1 or not set2:
+            return 0.0
+        
+        intersection = len(set1.intersection(set2))
+        union = len(set1.union(set2))
+        
+        return intersection / union if union > 0 else 0.0
+
     def transcribe_audio(self, audio_file: str, provider: str, **kwargs) -> TranscriptionResult:
         """Main transcription method"""
         self.logger.info(f"Starting transcription with {provider}")
         
         if provider == "openai-whisper":
             return self.transcribe_with_openai(audio_file, **kwargs)
-        elif provider.startswith("faster-whisper-"):
-            model_name = provider.replace("faster-whisper-", "")
+        elif provider.startswith("faster-whisper-") or "Faster-Whisper" in provider:
+            # Extract model name from provider string
+            if "Faster-Whisper" in provider:
+                if "Tiny" in provider:
+                    model_name = "tiny"
+                elif "Base" in provider:
+                    model_name = "base"
+                elif "Small" in provider:
+                    model_name = "small"
+                elif "Medium" in provider:
+                    model_name = "medium"
+                elif "Large-V1" in provider:
+                    model_name = "large-v1"
+                elif "Large-V2" in provider:
+                    model_name = "large-v2"
+                else:
+                    model_name = "base"  # fallback
+            else:
+                model_name = provider.replace("faster-whisper-", "")
             return self.transcribe_with_faster_whisper(audio_file, model_name, **kwargs)
-        elif provider.startswith("anime-whisper"):
-            return self.transcribe_with_faster_whisper(audio_file, "anime-whisper", **kwargs)
+        elif "Anime-Whisper" in provider or provider.startswith("anime-whisper") or provider == "anime-whisper":
+            return self.transcribe_with_anime_whisper(audio_file, **kwargs)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
 
