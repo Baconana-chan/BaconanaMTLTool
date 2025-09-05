@@ -18,6 +18,92 @@ import os
 import time
 from core.translator import TranslationManager
 from core.config import ConfigManager
+from core.gui_config import GUIConfigManager
+
+# Thread classes for background operations
+class SegmentRetranscriptionThread(QThread):
+    """Thread for re-transcribing specific audio segments"""
+    finished = pyqtSignal(bool, str)
+    error_occurred = pyqtSignal(str)
+    preview_ready = pyqtSignal(str)
+    changes_applied = pyqtSignal()
+    
+    def __init__(self, processor, audio_file, subtitle_file, start_time, end_time, 
+                 provider, options, create_backup, preview_mode):
+        super().__init__()
+        self.processor = processor
+        self.audio_file = audio_file
+        self.subtitle_file = subtitle_file
+        self.start_time = start_time
+        self.end_time = end_time
+        self.provider = provider
+        self.options = options
+        self.create_backup = create_backup
+        self.preview_mode = preview_mode
+        self.apply_changes = False
+        self.new_transcription = None
+        
+        # Connect signal to wait for user decision
+        self.changes_applied.connect(self.apply_segment_changes)
+    
+    def run(self):
+        try:
+            # Step 1: Transcribe the segment
+            self.new_transcription = self.processor.transcribe_segment(
+                self.audio_file, self.start_time, self.end_time, 
+                self.provider, **self.options
+            )
+            
+            if self.preview_mode:
+                # Generate preview text
+                preview_text = self._generate_preview()
+                self.preview_ready.emit(preview_text)
+                
+                # Wait for user decision
+                self.exec_()  # This will block until changes_applied is emitted
+                
+                if not self.apply_changes:
+                    self.finished.emit(False, "Changes cancelled by user.")
+                    return
+            
+            # Step 2: Apply changes to subtitle file
+            success = self.processor.update_subtitle_segment(
+                self.subtitle_file, self.start_time, self.end_time,
+                self.new_transcription, self.create_backup
+            )
+            
+            if success:
+                duration = self.end_time - self.start_time
+                message = f"Successfully updated segment {self.start_time:.2f}s - {self.end_time:.2f}s ({duration:.2f}s)"
+                if self.create_backup:
+                    message += f"\nBackup created: {self.subtitle_file}.backup"
+                self.finished.emit(True, message)
+            else:
+                self.finished.emit(False, "Failed to update subtitle file.")
+                
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+    
+    def apply_segment_changes(self):
+        """Apply the segment changes"""
+        self.apply_changes = True
+        self.quit()  # Exit the event loop
+    
+    def _generate_preview(self):
+        """Generate preview text for the new transcription"""
+        if not self.new_transcription or not self.new_transcription.segments:
+            return "No transcription results."
+        
+        preview = f"Segment: {self.start_time:.2f}s - {self.end_time:.2f}s\n"
+        preview += f"Duration: {self.end_time - self.start_time:.2f}s\n\n"
+        preview += "New transcription:\n"
+        preview += "-" * 40 + "\n"
+        
+        for i, segment in enumerate(self.new_transcription.segments, 1):
+            preview += f"{i}. [{segment.start:.2f}s - {segment.end:.2f}s]\n"
+            preview += f"   {segment.text.strip()}\n\n"
+        
+        return preview
 from localization.language_manager import LanguageManager
 from utils.project_estimator import ProjectEstimator
 
@@ -28,6 +114,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.config_manager = ConfigManager()
+        self.gui_config_manager = GUIConfigManager()
         self.language_manager = LanguageManager()
         self.translation_manager = None
         self.setup_ui()
@@ -35,21 +122,29 @@ class MainWindow(QMainWindow):
         
     def setup_ui(self):
         """Setup the user interface"""
-        self.setWindowTitle("BaconanaMTL Tool v1.2.2")
+        self.setWindowTitle("BaconanaMTL Tool v1.2.3")
 
+        # Load window settings from GUI config
+        window_settings = self.gui_config_manager.get_window_settings()
+        
         # Get screen geometry
         screen = QApplication.desktop().screenGeometry()
         
-        # Start maximized but respect screen size
-        self.showMaximized()
-        
-        # Set reasonable fallback size (80% of screen size)
-        fallback_width = int(screen.width() * 0.8)
-        fallback_height = int(screen.height() * 0.8)
-        fallback_x = int((screen.width() - fallback_width) / 2)
-        fallback_y = int((screen.height() - fallback_height) / 2)
-        
-        self.setGeometry(fallback_x, fallback_y, fallback_width, fallback_height)
+        # Apply saved window settings or defaults
+        if window_settings.get('maximized', False):
+            self.showMaximized()
+        else:
+            # Use saved size and position or defaults
+            width = window_settings.get('width', int(screen.width() * 0.8))
+            height = window_settings.get('height', int(screen.height() * 0.8))
+            x = window_settings.get('position_x', int((screen.width() - width) / 2))
+            y = window_settings.get('position_y', int((screen.height() - height) / 2))
+            
+            # Ensure window is within screen bounds
+            x = max(0, min(x, screen.width() - width))
+            y = max(0, min(y, screen.height() - height))
+            
+            self.setGeometry(x, y, width, height)
         
         # Set minimum size based on screen size
         min_width = min(800, int(screen.width() * 0.4))
@@ -138,8 +233,7 @@ class MainWindow(QMainWindow):
         tab_layout = QGridLayout(tab_group)
         
         self.tab_checkboxes = {}
-        config = self.config_manager.get_config()
-        visible_tabs = config.get('visible_tabs', {})
+        visible_tabs = self.gui_config_manager.get_visible_tabs()
         
         row = 0
         col = 0
@@ -184,20 +278,37 @@ class MainWindow(QMainWindow):
         warning_label.setStyleSheet("color: #FF9800; font-style: italic; margin-top: 10px;")
         layout.addWidget(warning_label)
         
+        # Application preferences section
+        prefs_group = QGroupBox("⚙️ Application Preferences")
+        prefs_layout = QVBoxLayout(prefs_group)
+        
+        # Auto-save tab settings checkbox
+        preferences = self.gui_config_manager.get_preferences()
+        self.auto_save_tabs_check = QCheckBox("Automatically save tab settings when closing application")
+        self.auto_save_tabs_check.setChecked(preferences.get('auto_save_tab_settings', True))
+        self.auto_save_tabs_check.stateChanged.connect(self.save_app_preferences)
+        prefs_layout.addWidget(self.auto_save_tabs_check)
+        
+        # Remember window size and position
+        self.remember_window_check = QCheckBox("Remember window size and position")
+        self.remember_window_check.setChecked(True)  # Always enabled for now
+        self.remember_window_check.setEnabled(False)  # Disabled as it's always on
+        prefs_layout.addWidget(self.remember_window_check)
+        
+        layout.addWidget(prefs_group)
+        
         layout.addStretch()
         
         tab_widget.addTab(settings_widget, "🎛️ Tab Settings")
 
     def load_tab_visibility_settings(self):
-        """Load tab visibility settings from config"""
-        config = self.config_manager.get_config()
-        return config.get('visible_tabs', {})
+        """Load tab visibility settings from GUI config"""
+        return self.gui_config_manager.get_visible_tabs()
 
     def save_tab_visibility_settings(self, visible_tabs):
-        """Save tab visibility settings to config"""
-        config = self.config_manager.get_config()
-        config['visible_tabs'] = visible_tabs
-        self.config_manager.save_config(config)
+        """Save tab visibility settings to GUI config"""
+        self.gui_config_manager.set_visible_tabs(visible_tabs)
+        self.gui_config_manager.save_config()
 
     def on_tab_visibility_changed(self):
         """Called when a tab visibility checkbox is changed - no longer auto-applies"""
@@ -250,6 +361,57 @@ class MainWindow(QMainWindow):
     def get_current_tab_visibility(self):
         """Get current tab visibility settings"""
         return self.load_tab_visibility_settings()
+        
+    def save_app_preferences(self):
+        """Save application preferences"""
+        try:
+            preferences = {
+                'auto_save_tab_settings': self.auto_save_tabs_check.isChecked(),
+                'remember_last_tab': True,  # Could be implemented later
+                'theme': 'default',
+                'font_size': 9
+            }
+            self.gui_config_manager.set_preferences(preferences)
+            self.gui_config_manager.save_config()
+        except Exception as e:
+            print(f"Error saving app preferences: {e}")
+
+    def save_window_settings(self):
+        """Save current window settings to GUI config"""
+        try:
+            window_settings = {
+                'width': self.width(),
+                'height': self.height(),
+                'position_x': self.x(),
+                'position_y': self.y(),
+                'maximized': self.isMaximized()
+            }
+            self.gui_config_manager.set_window_settings(window_settings)
+            self.gui_config_manager.save_config()
+        except Exception as e:
+            print(f"Error saving window settings: {e}")
+    
+    def closeEvent(self, event):
+        """Handle application close event"""
+        try:
+            # Save window settings before closing
+            self.save_window_settings()
+            
+            # Save tab visibility if auto-save is enabled
+            preferences = self.gui_config_manager.get_preferences()
+            if preferences.get('auto_save_tab_settings', True):
+                current_tab_visibility = {}
+                if hasattr(self, 'tab_checkboxes'):
+                    for tab_id, checkbox in self.tab_checkboxes.items():
+                        current_tab_visibility[tab_id] = checkbox.isChecked()
+                    self.save_tab_visibility_settings(current_tab_visibility)
+            
+            # Accept the close event
+            event.accept()
+            
+        except Exception as e:
+            print(f"Error during application close: {e}")
+            event.accept()  # Still close even if saving fails
         
     def setup_config_tab(self, tab_widget):
         """Setup configuration tab"""
@@ -1119,6 +1281,21 @@ class MainWindow(QMainWindow):
         self.condition_on_previous_check.setToolTip("Use previous text as context (disable to reduce repetition)")
         local_settings_layout.addWidget(self.condition_on_previous_check, 4, 2, 1, 2)
         
+        # Row 5 - Model cleanup and quality settings
+        self.force_cleanup_check = QCheckBox("Force Model Cleanup")
+        self.force_cleanup_check.setChecked(True)
+        self.force_cleanup_check.setToolTip("Force reload model for each transcription (prevents context pollution)")
+        local_settings_layout.addWidget(self.force_cleanup_check, 5, 0, 1, 2)
+        
+        self.max_segment_length_label = QLabel("Max Segment Length (chars):")
+        local_settings_layout.addWidget(self.max_segment_length_label, 5, 2)
+        
+        self.max_segment_length_spin = QSpinBox()
+        self.max_segment_length_spin.setRange(50, 500)
+        self.max_segment_length_spin.setValue(200)
+        self.max_segment_length_spin.setToolTip("Maximum characters per subtitle segment (prevents overly long segments)")
+        local_settings_layout.addWidget(self.max_segment_length_spin, 5, 3)
+        
         scroll_layout.addWidget(self.local_settings_group)
         self.local_settings_group.setVisible(False)  # Hidden by default
         
@@ -1168,6 +1345,62 @@ class MainWindow(QMainWindow):
         subtitle_layout.addWidget(self.save_raw_check, 3, 0, 1, 3)
         
         scroll_layout.addWidget(subtitle_group)
+        
+        # Segment Re-transcription Group
+        segment_group = QGroupBox("🔄 Re-transcribe Segment")
+        segment_layout = QGridLayout(segment_group)
+        
+        # Existing subtitle file selection
+        segment_layout.addWidget(QLabel("Existing Subtitle File:"), 0, 0)
+        self.existing_subtitle_edit = QLineEdit()
+        self.existing_subtitle_edit.setPlaceholderText("Select existing subtitle file to edit...")
+        segment_layout.addWidget(self.existing_subtitle_edit, 0, 1)
+        
+        self.browse_existing_btn = QPushButton("Browse")
+        self.browse_existing_btn.clicked.connect(self.browse_existing_subtitle)
+        segment_layout.addWidget(self.browse_existing_btn, 0, 2)
+        
+        # Time range selection
+        segment_layout.addWidget(QLabel("Start Time (seconds):"), 1, 0)
+        self.segment_start_spin = QDoubleSpinBox()
+        self.segment_start_spin.setRange(0.0, 999999.0)
+        self.segment_start_spin.setDecimals(2)
+        self.segment_start_spin.setSingleStep(0.1)
+        self.segment_start_spin.setToolTip("Start time in seconds for the segment to re-transcribe")
+        segment_layout.addWidget(self.segment_start_spin, 1, 1)
+        
+        segment_layout.addWidget(QLabel("End Time (seconds):"), 1, 2)
+        self.segment_end_spin = QDoubleSpinBox()
+        self.segment_end_spin.setRange(0.0, 999999.0)
+        self.segment_end_spin.setDecimals(2)
+        self.segment_end_spin.setSingleStep(0.1)
+        self.segment_end_spin.setValue(10.0)
+        self.segment_end_spin.setToolTip("End time in seconds for the segment to re-transcribe")
+        segment_layout.addWidget(self.segment_end_spin, 1, 3)
+        
+        # Options
+        self.create_backup_check = QCheckBox("Create backup of original file")
+        self.create_backup_check.setChecked(True)
+        self.create_backup_check.setToolTip("Create a backup copy before modifying the subtitle file")
+        segment_layout.addWidget(self.create_backup_check, 2, 0, 1, 2)
+        
+        self.preview_segment_check = QCheckBox("Preview changes before applying")
+        self.preview_segment_check.setChecked(True)
+        self.preview_segment_check.setToolTip("Show preview of changes before applying them")
+        segment_layout.addWidget(self.preview_segment_check, 2, 2, 1, 2)
+        
+        # Re-transcribe button
+        self.retranscribe_btn = QPushButton("🔄 Re-transcribe Segment")
+        self.retranscribe_btn.clicked.connect(self.start_segment_retranscription)
+        self.retranscribe_btn.setStyleSheet("QPushButton { background-color: #FF9800; color: white; padding: 8px; font-weight: bold; }")
+        self.retranscribe_btn.setEnabled(False)  # Enable when both audio and subtitle files are selected
+        segment_layout.addWidget(self.retranscribe_btn, 3, 0, 1, 4)
+        
+        scroll_layout.addWidget(segment_group)
+        
+        # Connect signals to enable/disable retranscribe button
+        self.audio_file_edit.textChanged.connect(self.check_retranscribe_enabled)
+        self.existing_subtitle_edit.textChanged.connect(self.check_retranscribe_enabled)
         
         # Action Buttons
         action_layout = QHBoxLayout()
@@ -1301,7 +1534,7 @@ class MainWindow(QMainWindow):
                 if not self.audio_processor.can_use_vad_filter():
                     self.vad_filter_check.setEnabled(False)
                     self.vad_filter_check.setChecked(False)
-                    self.vad_filter_check.setToolTip("VAD filter requires onnxruntime package. Install it to enable this feature.")
+                    self.vad_filter_check.setToolTip("VAD filter requires torch and torchaudio packages. Install them to enable this feature.")
                 else:
                     self.vad_filter_check.setEnabled(True)
                     self.vad_filter_check.setToolTip("Filter out non-speech segments.")
@@ -1406,7 +1639,9 @@ class MainWindow(QMainWindow):
                 "compression_ratio_threshold": 2.4,
                 "no_repeat_ngram_size": 2,
                 "condition_on_previous_text": False,
-                "description": "Balanced settings for general audio content like movies, podcasts, interviews. Anti-duplication enabled."
+                "force_cleanup": True,
+                "max_segment_length": 200,
+                "description": "Balanced settings with model cleanup to prevent context pollution. Good for general content."
             },
             "🎭 Anime/Voiced Content (NSFW-Safe)": {
                 "provider": "Anime-Whisper (Free, Anime/NSFW Optimized)",
@@ -1418,7 +1653,9 @@ class MainWindow(QMainWindow):
                 "compression_ratio_threshold": 2.0,
                 "no_repeat_ngram_size": 3,
                 "condition_on_previous_text": False,
-                "description": "Optimized for anime, games, and adult content. Aggressive anti-duplication for repeated sounds/phrases."
+                "force_cleanup": True,
+                "max_segment_length": 150,
+                "description": "Optimized for anime/games. Aggressive anti-duplication and model cleanup for repetitive sounds."
             },
             "🎤 Podcast/Interview (Voice-Only)": {
                 "provider": "Faster-Whisper Medium (Free)",
@@ -1430,7 +1667,9 @@ class MainWindow(QMainWindow):
                 "compression_ratio_threshold": 2.4,
                 "no_repeat_ngram_size": 2,
                 "condition_on_previous_text": True,
-                "description": "High accuracy for clear speech content with voice activity detection and context awareness."
+                "force_cleanup": False,
+                "max_segment_length": 250,
+                "description": "High accuracy for clear speech. Context awareness enabled, cleanup disabled for continuity."
             },
             "🎵 Music/Song Transcription": {
                 "provider": "Faster-Whisper Large-V2 (Free)",
@@ -1442,7 +1681,9 @@ class MainWindow(QMainWindow):
                 "compression_ratio_threshold": 1.8,
                 "no_repeat_ngram_size": 0,
                 "condition_on_previous_text": True,
-                "description": "For transcribing lyrics from songs. Allows repetition for chorus/verses."
+                "force_cleanup": False,
+                "max_segment_length": 300,
+                "description": "For lyrics transcription. Allows repetition for chorus/verses, no cleanup for song flow."
             },
             "🔊 Low Quality Audio": {
                 "provider": "Faster-Whisper Large-V2 (Free)",
@@ -1450,11 +1691,13 @@ class MainWindow(QMainWindow):
                 "temperature": 0.1,
                 "vad_filter": True,
                 "word_timestamps": False,
-                "repetition_penalty": 1.2,
+                "repetition_penalty": 1.3,
                 "compression_ratio_threshold": 2.8,
                 "no_repeat_ngram_size": 3,
                 "condition_on_previous_text": False,
-                "description": "Enhanced settings for poor quality or noisy audio. Strong anti-duplication filters."
+                "force_cleanup": True,
+                "max_segment_length": 180,
+                "description": "Enhanced for poor quality audio. Strong anti-duplication and model cleanup for noise artifacts."
             },
             "⚡ Fast Processing": {
                 "provider": "Faster-Whisper Tiny (Free)",
@@ -1466,7 +1709,9 @@ class MainWindow(QMainWindow):
                 "compression_ratio_threshold": 2.4,
                 "no_repeat_ngram_size": 2,
                 "condition_on_previous_text": False,
-                "description": "Fastest processing with minimal accuracy trade-off. Basic anti-duplication."
+                "force_cleanup": True,
+                "max_segment_length": 150,
+                "description": "Fastest processing with model cleanup. Basic anti-duplication for quick previews."
             },
             "🎯 High Accuracy": {
                 "provider": "Faster-Whisper Large-V2 (Free)",
@@ -1478,11 +1723,9 @@ class MainWindow(QMainWindow):
                 "compression_ratio_threshold": 2.4,
                 "no_repeat_ngram_size": 2,
                 "condition_on_previous_text": True,
-                "description": "Maximum accuracy settings with balanced anti-duplication. Slower processing but best results."
-            },
-                "vad_filter": True,
-                "word_timestamps": True,
-                "description": "Maximum accuracy settings. Slower processing but best results."
+                "force_cleanup": True,
+                "max_segment_length": 300,
+                "description": "Maximum accuracy with balanced settings. Model cleanup ensures consistent quality."
             }
         }
         
@@ -1514,6 +1757,12 @@ class MainWindow(QMainWindow):
                 self.no_repeat_ngram_spin.setValue(config.get("no_repeat_ngram_size", 2))
             if hasattr(self, 'condition_on_previous_check'):
                 self.condition_on_previous_check.setChecked(config.get("condition_on_previous_text", False))
+            
+            # Apply model cleanup settings
+            if hasattr(self, 'force_cleanup_check'):
+                self.force_cleanup_check.setChecked(config.get("force_cleanup", True))
+            if hasattr(self, 'max_segment_length_spin'):
+                self.max_segment_length_spin.setValue(config.get("max_segment_length", 200))
             
             # Update description
             self.preset_description.setText(config["description"])
@@ -4989,7 +5238,7 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
         
         <div class="version">
             <h3>📋 Version Information</h3>
-            <p><strong>Version:</strong> 1.2.2</p>
+            <p><strong>Version:</strong> 1.2.3</p>
             <p><strong>Release Date:</strong> September 2025</p>
         </div>
         
@@ -5366,6 +5615,10 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                 options['compression_ratio_threshold'] = self.compression_ratio_spin.value()
                 options['no_repeat_ngram_size'] = self.no_repeat_ngram_spin.value()
                 options['condition_on_previous_text'] = self.condition_on_previous_check.isChecked()
+                
+                # Model cleanup and quality settings
+                options['force_cleanup'] = self.force_cleanup_check.isChecked()
+                options['max_segment_length'] = self.max_segment_length_spin.value()
             
             # Start transcription thread
             self.transcription_thread = TranscriptionThread(
@@ -5474,6 +5727,184 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
         self.transcription_progress.setValue(0)
         self.transcribe_btn.setEnabled(True)
         self.stop_transcription_btn.setEnabled(False)
+
+    def browse_existing_subtitle(self):
+        """Browse for existing subtitle file"""
+        file_dialog = QFileDialog()
+        file_path, _ = file_dialog.getOpenFileName(
+            self, 
+            "Select Existing Subtitle File", 
+            "", 
+            "Subtitle Files (*.srt *.vtt *.ass);;SRT Files (*.srt);;VTT Files (*.vtt);;ASS Files (*.ass);;All Files (*)"
+        )
+        if file_path:
+            self.existing_subtitle_edit.setText(file_path)
+
+    def check_retranscribe_enabled(self):
+        """Enable/disable retranscribe button based on file selection"""
+        has_audio = bool(self.audio_file_edit.text().strip())
+        has_subtitle = bool(self.existing_subtitle_edit.text().strip())
+        self.retranscribe_btn.setEnabled(has_audio and has_subtitle)
+
+    def start_segment_retranscription(self):
+        """Start re-transcription of specific segment"""
+        audio_file = self.audio_file_edit.text().strip()
+        subtitle_file = self.existing_subtitle_edit.text().strip()
+        start_time = self.segment_start_spin.value()
+        end_time = self.segment_end_spin.value()
+        
+        # Validate inputs
+        if not audio_file or not subtitle_file:
+            QMessageBox.warning(self, "Missing Files", "Please select both audio and subtitle files.")
+            return
+        
+        if start_time >= end_time:
+            QMessageBox.warning(self, "Invalid Time Range", "Start time must be less than end time.")
+            return
+        
+        if not os.path.exists(audio_file):
+            QMessageBox.warning(self, "File Not Found", f"Audio file not found:\n{audio_file}")
+            return
+        
+        if not os.path.exists(subtitle_file):
+            QMessageBox.warning(self, "File Not Found", f"Subtitle file not found:\n{subtitle_file}")
+            return
+        
+        # Show confirmation dialog
+        duration = end_time - start_time
+        msg = f"Re-transcribe segment from {start_time:.2f}s to {end_time:.2f}s ({duration:.2f}s duration)?\n\n"
+        msg += f"Audio: {os.path.basename(audio_file)}\n"
+        msg += f"Subtitle: {os.path.basename(subtitle_file)}\n\n"
+        if self.create_backup_check.isChecked():
+            msg += "A backup will be created before making changes."
+        
+        reply = QMessageBox.question(self, "Confirm Segment Re-transcription", msg,
+                                   QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            self._execute_segment_retranscription(audio_file, subtitle_file, start_time, end_time)
+
+    def _execute_segment_retranscription(self, audio_file: str, subtitle_file: str, 
+                                       start_time: float, end_time: float):
+        """Execute the segment re-transcription"""
+        try:
+            # Disable UI elements
+            self.retranscribe_btn.setEnabled(False)
+            self.retranscribe_btn.setText("🔄 Processing...")
+            
+            # Get current provider and options
+            provider = self.audio_provider_combo.currentText()
+            options = self._get_transcription_options()
+            
+            # Initialize audio processor
+            if not self.audio_processor:
+                from core.audio_processor import AudioProcessor
+                self.audio_processor = AudioProcessor(self.config_manager)
+            
+            # Create worker thread for segment processing
+            self.segment_thread = SegmentRetranscriptionThread(
+                self.audio_processor, audio_file, subtitle_file,
+                start_time, end_time, provider, options,
+                self.create_backup_check.isChecked(),
+                self.preview_segment_check.isChecked()
+            )
+            
+            self.segment_thread.finished.connect(self.on_segment_retranscription_finished)
+            self.segment_thread.error_occurred.connect(self.on_segment_retranscription_error)
+            self.segment_thread.preview_ready.connect(self.on_segment_preview_ready)
+            self.segment_thread.start()
+            
+        except Exception as e:
+            self.on_segment_retranscription_error(str(e))
+
+    def _get_transcription_options(self) -> dict:
+        """Get current transcription options"""
+        options = {}
+        
+        # Language setting
+        if self.audio_language_combo.currentText() != "Auto-detect":
+            options['language'] = self.audio_language_combo.currentText().lower()
+        
+        # Provider-specific options
+        provider_text = self.audio_provider_combo.currentText()
+        if "Faster-Whisper" in provider_text:
+            options['compute_type'] = self.compute_type_combo.currentText()
+            options['device'] = self.device_combo.currentText()
+            options['beam_size'] = self.beam_size_spin.value()
+            options['temperature'] = self.temperature_spin.value()
+            options['vad_filter'] = self.vad_filter_check.isChecked()
+            options['word_timestamps'] = self.word_timestamps_check.isChecked()
+            
+            # Anti-duplication settings
+            options['repetition_penalty'] = self.repetition_penalty_spin.value()
+            options['compression_ratio_threshold'] = self.compression_ratio_spin.value()
+            options['no_repeat_ngram_size'] = self.no_repeat_ngram_spin.value()
+            options['condition_on_previous_text'] = self.condition_on_previous_check.isChecked()
+            
+            # Model cleanup settings
+            options['force_cleanup'] = self.force_cleanup_check.isChecked()
+            options['max_segment_length'] = self.max_segment_length_spin.value()
+        
+        return options
+
+    def on_segment_preview_ready(self, preview_text: str):
+        """Handle segment preview ready"""
+        # Show preview dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Preview Segment Changes")
+        dialog.setModal(True)
+        dialog.resize(600, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        label = QLabel("Preview of new transcription:")
+        layout.addWidget(label)
+        
+        preview_edit = QTextEdit()
+        preview_edit.setPlainText(preview_text)
+        preview_edit.setReadOnly(True)
+        layout.addWidget(preview_edit)
+        
+        button_layout = QHBoxLayout()
+        
+        apply_btn = QPushButton("Apply Changes")
+        apply_btn.clicked.connect(lambda: self._apply_segment_changes(dialog))
+        button_layout.addWidget(apply_btn)
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        button_layout.addWidget(cancel_btn)
+        
+        layout.addLayout(button_layout)
+        
+        dialog.exec_()
+
+    def _apply_segment_changes(self, dialog):
+        """Apply the segment changes"""
+        dialog.accept()
+        if hasattr(self, 'segment_thread'):
+            self.segment_thread.apply_changes = True
+            self.segment_thread.changes_applied.emit()
+
+    def on_segment_retranscription_finished(self, success: bool, message: str):
+        """Handle segment re-transcription completion"""
+        # Re-enable UI
+        self.retranscribe_btn.setEnabled(True)
+        self.retranscribe_btn.setText("🔄 Re-transcribe Segment")
+        
+        if success:
+            QMessageBox.information(self, "Segment Updated", message)
+        else:
+            QMessageBox.warning(self, "Update Failed", message)
+
+    def on_segment_retranscription_error(self, error_msg: str):
+        """Handle segment re-transcription error"""
+        # Re-enable UI
+        self.retranscribe_btn.setEnabled(True)
+        self.retranscribe_btn.setText("🔄 Re-transcribe Segment")
+        
+        QMessageBox.critical(self, "Segment Re-transcription Error", 
+                           f"Error during segment re-transcription:\n{error_msg}")
 
     # ==================== LOCAL MODELS METHODS ====================
     

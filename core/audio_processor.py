@@ -26,10 +26,34 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 try:
-    import onnxruntime
-    ONNXRUNTIME_AVAILABLE = True
+    import torch
+    import torchaudio
+    from pathlib import Path
+    
+    # Try to import Silero VAD
+    silero_vad_model = None
+    utils = None
+    
+    def load_silero_vad():
+        global silero_vad_model, utils
+        if silero_vad_model is None:
+            try:
+                silero_vad_model, utils = torch.hub.load(
+                    repo_or_dir='snakers4/silero-vad',
+                    model='silero_vad',
+                    force_reload=False
+                )
+            except Exception as e:
+                print(f"Failed to load Silero VAD: {e}")
+                return None, None
+        return silero_vad_model, utils
+    
+    SILERO_VAD_AVAILABLE = True
 except ImportError:
-    ONNXRUNTIME_AVAILABLE = False
+    SILERO_VAD_AVAILABLE = False
+    
+    def load_silero_vad():
+        return None, None
 
 try:
     import transformers
@@ -134,10 +158,10 @@ class AudioProcessor:
                 "description": "Required for OpenAI Whisper API",
                 "install_command": "pip install openai"
             },
-            "onnxruntime": {
-                "available": self._check_import("onnxruntime"),
+            "silero_vad": {
+                "available": SILERO_VAD_AVAILABLE,
                 "description": "Required for VAD (Voice Activity Detection) filter",
-                "install_command": "pip install onnxruntime"
+                "install_command": "pip install torch torchaudio"
             },
             "transformers": {
                 "available": self._check_import("transformers"),
@@ -166,7 +190,7 @@ class AudioProcessor:
 
     def can_use_vad_filter(self) -> bool:
         """Check if VAD filter can be used"""
-        return self._check_import("onnxruntime")
+        return SILERO_VAD_AVAILABLE
 
     def get_installed_models(self) -> List[str]:
         """Get list of installed faster-whisper models"""
@@ -435,6 +459,149 @@ class AudioProcessor:
             self.logger.error(f"Anime-Whisper transcription error: {e}")
             raise RuntimeError(f"Anime-Whisper transcription failed: {str(e)}")
 
+    def apply_silero_vad(self, audio_file: str, output_file: str = None, 
+                        threshold: float = 0.5, 
+                        min_speech_duration_ms: int = 250,
+                        min_silence_duration_ms: int = 100,
+                        window_size_samples: int = 1536,
+                        speech_pad_ms: int = 30) -> str:
+        """Apply Silero VAD to filter out non-speech segments"""
+        if not SILERO_VAD_AVAILABLE:
+            self.logger.warning("Silero VAD not available, returning original audio")
+            return audio_file
+            
+        try:
+            # Load Silero VAD model
+            model, utils = load_silero_vad()
+            if model is None:
+                self.logger.warning("Failed to load Silero VAD model, returning original audio")
+                return audio_file
+            
+            # Load audio using ffmpeg to avoid torchaudio backend issues
+            try:
+                import subprocess
+                import numpy as np
+                
+                # Use ffmpeg to convert audio to raw PCM data
+                cmd = [
+                    'ffmpeg', '-i', audio_file,
+                    '-f', 's16le',    # output format: signed 16-bit little-endian
+                    '-ar', '16000',   # sample rate: 16kHz
+                    '-ac', '1',       # mono
+                    'pipe:1'          # output to stdout
+                ]
+                
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                raw_audio, _ = process.communicate()
+                
+                if process.returncode != 0:
+                    raise RuntimeError(f"ffmpeg failed with return code {process.returncode}")
+                
+                # Convert raw bytes to numpy array, then to torch tensor
+                audio_np = np.frombuffer(raw_audio, dtype=np.int16)
+                # Normalize to [-1, 1] range
+                audio_np = audio_np.astype(np.float32) / 32768.0
+                # Convert to torch tensor and add batch dimension
+                wav = torch.from_numpy(audio_np).unsqueeze(0)
+                sr = 16000
+                
+            except Exception as load_error:
+                self.logger.error(f"Failed to load audio with ffmpeg: {load_error}")
+                # Fallback to torchaudio
+                try:
+                    wav, sr = torchaudio.load(audio_file)
+                    # Resample to 16kHz if needed (Silero VAD works best with 16kHz)
+                    if sr != 16000:
+                        resampler = torchaudio.transforms.Resample(sr, 16000)
+                        wav = resampler(wav)
+                        sr = 16000
+                except Exception as fallback_error:
+                    self.logger.error(f"Fallback torchaudio load also failed: {fallback_error}")
+                    return audio_file
+            
+            # Convert to mono if stereo
+            if wav.shape[0] > 1:
+                wav = torch.mean(wav, dim=0, keepdim=True)
+            
+            # Get speech timestamps
+            speech_timestamps = utils[0](wav, model, 
+                                       threshold=threshold,
+                                       min_speech_duration_ms=min_speech_duration_ms,
+                                       min_silence_duration_ms=min_silence_duration_ms,
+                                       window_size_samples=window_size_samples,
+                                       speech_pad_ms=speech_pad_ms)
+            
+            if not speech_timestamps:
+                self.logger.warning("No speech detected by Silero VAD, returning original audio")
+                return audio_file
+            
+            # Merge speech segments
+            speech_segments = []
+            for timestamp in speech_timestamps:
+                start_sample = timestamp['start']
+                end_sample = timestamp['end']
+                speech_segments.append(wav[:, start_sample:end_sample])
+            
+            # Concatenate speech segments
+            filtered_wav = torch.cat(speech_segments, dim=1)
+            
+            # Save filtered audio using numpy and ffmpeg to avoid torchaudio backend issues
+            if output_file is None:
+                import tempfile
+                import os
+                temp_dir = tempfile.gettempdir()
+                base_name = os.path.splitext(os.path.basename(audio_file))[0]
+                output_file = os.path.join(temp_dir, f"{base_name}_vad_filtered.wav")
+            
+            # Convert to numpy and save using subprocess/ffmpeg
+            try:
+                import numpy as np
+                import subprocess
+                
+                # Convert tensor to numpy
+                audio_np = filtered_wav.squeeze(0).numpy()
+                
+                # Normalize to 16-bit range
+                audio_16bit = (audio_np * 32767).astype(np.int16)
+                
+                # Use ffmpeg to save the audio
+                cmd = [
+                    'ffmpeg', '-y',  # -y to overwrite output file
+                    '-f', 's16le',   # input format: signed 16-bit little-endian
+                    '-ar', str(sr),  # sample rate
+                    '-ac', '1',      # mono
+                    '-i', 'pipe:0',  # input from stdin
+                    output_file
+                ]
+                
+                process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                process.communicate(input=audio_16bit.tobytes())
+                
+                if process.returncode != 0:
+                    raise RuntimeError(f"ffmpeg failed with return code {process.returncode}")
+                    
+            except Exception as save_error:
+                self.logger.error(f"Error saving VAD filtered audio: {save_error}")
+                # Fallback: try torchaudio anyway
+                try:
+                    torchaudio.save(output_file, filtered_wav, sr)
+                except Exception as fallback_error:
+                    self.logger.error(f"Fallback torchaudio save also failed: {fallback_error}")
+                    return audio_file
+            
+            # Log VAD results
+            original_duration = wav.shape[1] / sr
+            filtered_duration = filtered_wav.shape[1] / sr
+            self.logger.info(f"Silero VAD applied: {original_duration:.2f}s -> {filtered_duration:.2f}s "
+                           f"({len(speech_timestamps)} speech segments)")
+            
+            return output_file
+            
+        except Exception as e:
+            self.logger.error(f"Silero VAD error: {e}")
+            self.logger.warning("Returning original audio due to VAD error")
+            return audio_file
+
     def transcribe_with_faster_whisper(self, audio_file: str, model_name: str = "base", 
                                       compute_type: str = "auto", device: str = "cpu",
                                       beam_size: int = 5, temperature: float = 0.0,
@@ -469,20 +636,46 @@ class AudioProcessor:
             # Get audio duration for progress estimation
             start_time = time.time()
             
-            # Check VAD filter availability
-            if vad_filter and not self.can_use_vad_filter():
-                self.logger.warning("VAD filter requested but onnxruntime not available. Disabling VAD filter.")
+            # Apply Silero VAD if requested and available
+            processed_audio_file = audio_file
+            vad_temp_file = None
+            
+            if vad_filter and self.can_use_vad_filter():
+                if progress_callback:
+                    progress_callback(15, "Applying voice activity detection...")
+                
+                processed_audio_file = self.apply_silero_vad(
+                    audio_file,
+                    threshold=kwargs.get('vad_threshold', 0.5),
+                    min_speech_duration_ms=kwargs.get('min_speech_duration_ms', 250),
+                    min_silence_duration_ms=kwargs.get('min_silence_duration_ms', 100),
+                    speech_pad_ms=kwargs.get('speech_pad_ms', 30)
+                )
+                
+                # Keep track of temp file for cleanup
+                if processed_audio_file != audio_file:
+                    vad_temp_file = processed_audio_file
+                    
+            elif vad_filter and not self.can_use_vad_filter():
+                self.logger.warning("VAD filter requested but Silero VAD not available. Disabling VAD filter.")
                 vad_filter = False
             
-            # Prepare transcription parameters
+            # Prepare transcription parameters (disable built-in VAD since we use Silero)
             transcribe_params = {
                 "beam_size": beam_size,
-                "vad_filter": vad_filter,
+                "vad_filter": False,  # We handle VAD with Silero now
                 "word_timestamps": word_timestamps,
                 "repetition_penalty": repetition_penalty,
                 "compression_ratio_threshold": compression_ratio_threshold,
                 "logprob_threshold": logprob_threshold,
-                "condition_on_previous_text": condition_on_previous_text
+                "condition_on_previous_text": condition_on_previous_text,
+                # Additional parameters to prevent context pollution
+                "prompt_reset_on_temperature": 0.5,  # Reset prompt when temperature sampling
+                "initial_prompt": None,  # Clear any initial prompt
+                "no_speech_threshold": 0.6,  # Filter out non-speech segments
+                "suppress_blank": True,  # Suppress blank outputs
+                "suppress_tokens": [-1],  # Suppress specific tokens
+                "max_initial_timestamp": 1.0  # Limit initial timestamp
             }
             
             # Add no_repeat_ngram_size only if it's greater than 0
@@ -498,7 +691,7 @@ class AudioProcessor:
             if progress_callback:
                 progress_callback(25, "Starting transcription with faster-whisper...")
             
-            segments, info = model.transcribe(audio_file, **transcribe_params)
+            segments, info = model.transcribe(processed_audio_file, **transcribe_params)
             
             subtitle_segments = []
             full_text = ""
@@ -510,6 +703,7 @@ class AudioProcessor:
             # Process segments and remove duplicates
             previous_text = ""
             duplicate_threshold = 0.8  # Similarity threshold for duplicate detection
+            max_segment_length = kwargs.get('max_segment_length', 200)  # Maximum characters per segment
             
             for i, segment in enumerate(segments):
                 # Ensure start and end are valid numbers
@@ -522,11 +716,52 @@ class AudioProcessor:
                     self.logger.debug(f"Skipping duplicate segment: '{current_text}'")
                     continue
                 
-                subtitle_segments.append(SubtitleSegment(
-                    start=segment_start,
-                    end=segment_end,
-                    text=current_text
-                ))
+                # Split long segments if needed
+                if len(current_text) > max_segment_length:
+                    # Split by sentences first, then by words if needed
+                    import re
+                    sentences = re.split(r'[.!?。！？]', current_text)
+                    
+                    current_chunk = ""
+                    chunk_start = segment_start
+                    segment_duration = segment_end - segment_start
+                    
+                    for j, sentence in enumerate(sentences):
+                        sentence = sentence.strip()
+                        if not sentence:
+                            continue
+                            
+                        if len(current_chunk + sentence) <= max_segment_length:
+                            current_chunk += sentence + (" " if j < len(sentences) - 1 else "")
+                        else:
+                            # Add current chunk if not empty
+                            if current_chunk.strip():
+                                chunk_duration = segment_duration * (len(current_chunk) / len(current_text))
+                                subtitle_segments.append(SubtitleSegment(
+                                    start=chunk_start,
+                                    end=chunk_start + chunk_duration,
+                                    text=current_chunk.strip()
+                                ))
+                                chunk_start += chunk_duration
+                            
+                            # Start new chunk
+                            current_chunk = sentence + (" " if j < len(sentences) - 1 else "")
+                    
+                    # Add final chunk
+                    if current_chunk.strip():
+                        subtitle_segments.append(SubtitleSegment(
+                            start=chunk_start,
+                            end=segment_end,
+                            text=current_chunk.strip()
+                        ))
+                else:
+                    # Normal segment within length limit
+                    subtitle_segments.append(SubtitleSegment(
+                        start=segment_start,
+                        end=segment_end,
+                        text=current_text
+                    ))
+                
                 full_text += current_text + " "
                 previous_text = current_text                # Update progress based on processed audio duration
                 processed_duration = segment_end
@@ -568,6 +803,37 @@ class AudioProcessor:
             self.logger.error(f"Error type: {type(e).__name__}")
             self.logger.error(f"Traceback: {traceback.format_exc()}")
             raise
+        finally:
+            # Force cleanup of the model to prevent memory issues and context pollution
+            try:
+                if 'model' in locals() and model is not None:
+                    self.logger.info("Cleaning up model to prevent context pollution...")
+                    del model
+                    
+                    # Force garbage collection
+                    import gc
+                    gc.collect()
+                    
+                    # Clear CUDA cache if available
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except ImportError:
+                        pass
+                        
+            except Exception as cleanup_error:
+                self.logger.warning(f"Error during model cleanup: {cleanup_error}")
+            
+            # Clean up VAD temporary file
+            try:
+                if 'vad_temp_file' in locals() and vad_temp_file and vad_temp_file != audio_file:
+                    import os
+                    if os.path.exists(vad_temp_file):
+                        os.remove(vad_temp_file)
+                        self.logger.debug(f"Cleaned up VAD temp file: {vad_temp_file}")
+            except Exception as vad_cleanup_error:
+                self.logger.warning(f"Error cleaning up VAD temp file: {vad_cleanup_error}")
 
     def _text_similarity(self, text1: str, text2: str) -> float:
         """Calculate similarity between two text strings using simple character-based comparison"""
@@ -625,6 +891,293 @@ class AudioProcessor:
             return self.transcribe_with_anime_whisper(audio_file, **kwargs)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
+
+    def transcribe_segment(self, audio_file: str, start_time: float, end_time: float, 
+                          provider: str, **kwargs) -> TranscriptionResult:
+        """Transcribe a specific time segment of audio file"""
+        import tempfile
+        import subprocess
+        
+        self.logger.info(f"Transcribing segment {start_time:.2f}s - {end_time:.2f}s")
+        
+        # Create temporary audio segment using ffmpeg
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+            temp_audio_path = temp_file.name
+        
+        try:
+            # Extract audio segment using ffmpeg
+            duration = end_time - start_time
+            cmd = [
+                'ffmpeg', '-y', '-i', audio_file,
+                '-ss', str(start_time),
+                '-t', str(duration),
+                '-acodec', 'pcm_s16le',
+                '-ar', '16000',
+                temp_audio_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"FFmpeg failed: {result.stderr}")
+            
+            # Transcribe the segment
+            segment_result = self.transcribe_audio(temp_audio_path, provider, **kwargs)
+            
+            # Adjust timestamps to match original file
+            for segment in segment_result.segments:
+                segment.start += start_time
+                segment.end += start_time
+            
+            return segment_result
+            
+        finally:
+            # Clean up temporary file
+            try:
+                import os
+                os.unlink(temp_audio_path)
+            except:
+                pass
+
+    def update_subtitle_segment(self, subtitle_file: str, start_time: float, end_time: float,
+                               new_transcription: TranscriptionResult, backup: bool = True) -> bool:
+        """Update specific time segment in existing subtitle file"""
+        try:
+            # Create backup if requested
+            if backup:
+                import shutil
+                backup_path = subtitle_file + '.backup'
+                shutil.copy2(subtitle_file, backup_path)
+                self.logger.info(f"Created backup: {backup_path}")
+            
+            # Determine subtitle format
+            file_extension = subtitle_file.lower().split('.')[-1]
+            
+            if file_extension == 'srt':
+                return self._update_srt_segment(subtitle_file, start_time, end_time, new_transcription)
+            elif file_extension == 'vtt':
+                return self._update_vtt_segment(subtitle_file, start_time, end_time, new_transcription)
+            elif file_extension == 'ass':
+                return self._update_ass_segment(subtitle_file, start_time, end_time, new_transcription)
+            else:
+                raise ValueError(f"Unsupported subtitle format: {file_extension}")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to update subtitle segment: {e}")
+            return False
+
+    def _update_srt_segment(self, srt_file: str, start_time: float, end_time: float,
+                           new_transcription: TranscriptionResult) -> bool:
+        """Update SRT subtitle segment"""
+        try:
+            # Read existing SRT file
+            with open(srt_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Parse SRT entries
+            import re
+            srt_pattern = r'(\d+)\n([\d:,]+) --> ([\d:,]+)\n((?:.+\n?)*?)(?=\n\d+\n|$)'
+            matches = re.findall(srt_pattern, content, re.MULTILINE)
+            
+            new_entries = []
+            entry_counter = 1
+            
+            # Process existing entries
+            for match in matches:
+                entry_num, start_str, end_str, text = match
+                entry_start = self._parse_srt_time(start_str)
+                entry_end = self._parse_srt_time(end_str)
+                
+                # Skip entries that overlap with our target segment
+                if not (entry_end <= start_time or entry_start >= end_time):
+                    continue
+                
+                new_entries.append({
+                    'start': entry_start,
+                    'end': entry_end,
+                    'text': text.strip()
+                })
+            
+            # Add new transcription segments
+            for segment in new_transcription.segments:
+                if segment.text.strip():
+                    new_entries.append({
+                        'start': segment.start,
+                        'end': segment.end,
+                        'text': segment.text.strip()
+                    })
+            
+            # Sort by start time
+            new_entries.sort(key=lambda x: x['start'])
+            
+            # Generate new SRT content
+            new_content = ""
+            for i, entry in enumerate(new_entries, 1):
+                start_str = self.format_time_srt(entry['start'])
+                end_str = self.format_time_srt(entry['end'])
+                new_content += f"{i}\n{start_str} --> {end_str}\n{entry['text']}\n\n"
+            
+            # Write updated file
+            with open(srt_file, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update SRT segment: {e}")
+            return False
+
+    def _parse_srt_time(self, time_str: str) -> float:
+        """Parse SRT timestamp to seconds"""
+        # Format: HH:MM:SS,mmm
+        import re
+        match = re.match(r'(\d{2}):(\d{2}):(\d{2}),(\d{3})', time_str)
+        if match:
+            h, m, s, ms = map(int, match.groups())
+            return h * 3600 + m * 60 + s + ms / 1000.0
+        return 0.0
+
+    def _update_vtt_segment(self, vtt_file: str, start_time: float, end_time: float,
+                           new_transcription: TranscriptionResult) -> bool:
+        """Update VTT subtitle segment"""
+        try:
+            # Read existing VTT file
+            with open(vtt_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Find and remove existing segments in time range
+            new_lines = []
+            skip_entry = False
+            
+            for line in lines:
+                line = line.strip()
+                
+                # Check if this is a timestamp line
+                if '-->' in line:
+                    parts = line.split(' --> ')
+                    if len(parts) == 2:
+                        entry_start = self._parse_vtt_time(parts[0])
+                        entry_end = self._parse_vtt_time(parts[1])
+                        
+                        # Check if this entry overlaps with our target segment
+                        if not (entry_end <= start_time or entry_start >= end_time):
+                            skip_entry = True
+                            continue
+                
+                if skip_entry:
+                    # Skip until we hit an empty line (end of entry)
+                    if line == '':
+                        skip_entry = False
+                    continue
+                
+                new_lines.append(line + '\n')
+            
+            # Add new transcription segments
+            for segment in new_transcription.segments:
+                if segment.text.strip():
+                    start_str = self.format_time_vtt(segment.start)
+                    end_str = self.format_time_vtt(segment.end)
+                    new_lines.append(f"{start_str} --> {end_str}\n")
+                    new_lines.append(f"{segment.text.strip()}\n")
+                    new_lines.append('\n')
+            
+            # Write updated file
+            with open(vtt_file, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update VTT segment: {e}")
+            return False
+
+    def _parse_vtt_time(self, time_str: str) -> float:
+        """Parse VTT timestamp to seconds"""
+        # Format: HH:MM:SS.mmm or MM:SS.mmm
+        import re
+        
+        # Try HH:MM:SS.mmm format
+        match = re.match(r'(\d{2}):(\d{2}):(\d{2})\.(\d{3})', time_str)
+        if match:
+            h, m, s, ms = map(int, match.groups())
+            return h * 3600 + m * 60 + s + ms / 1000.0
+        
+        # Try MM:SS.mmm format
+        match = re.match(r'(\d{2}):(\d{2})\.(\d{3})', time_str)
+        if match:
+            m, s, ms = map(int, match.groups())
+            return m * 60 + s + ms / 1000.0
+        
+        return 0.0
+
+    def _update_ass_segment(self, ass_file: str, start_time: float, end_time: float,
+                           new_transcription: TranscriptionResult) -> bool:
+        """Update ASS subtitle segment"""
+        try:
+            # Read existing ASS file
+            with open(ass_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            # Find [Events] section and remove overlapping dialogues
+            new_lines = []
+            in_events = False
+            
+            for line in lines:
+                if line.startswith('[Events]'):
+                    in_events = True
+                    new_lines.append(line)
+                    continue
+                elif line.startswith('[') and in_events:
+                    in_events = False
+                
+                if in_events and line.startswith('Dialogue:'):
+                    parts = line.split(',', 9)
+                    if len(parts) >= 10:
+                        entry_start = self._parse_ass_time(parts[1])
+                        entry_end = self._parse_ass_time(parts[2])
+                        
+                        # Skip if this dialogue overlaps with our target segment
+                        if not (entry_end <= start_time or entry_start >= end_time):
+                            continue
+                
+                new_lines.append(line)
+            
+            # Add new transcription segments before the last section
+            for segment in new_transcription.segments:
+                if segment.text.strip():
+                    start_str = self.format_time_ass(segment.start)
+                    end_str = self.format_time_ass(segment.end)
+                    dialogue_line = f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{segment.text.strip()}\n"
+                    
+                    # Insert before any non-Events section or at the end
+                    inserted = False
+                    for i, line in enumerate(new_lines):
+                        if line.startswith('[') and not line.startswith('[Events]') and not inserted:
+                            new_lines.insert(i, dialogue_line)
+                            inserted = True
+                            break
+                    
+                    if not inserted:
+                        new_lines.append(dialogue_line)
+            
+            # Write updated file
+            with open(ass_file, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update ASS segment: {e}")
+            return False
+
+    def _parse_ass_time(self, time_str: str) -> float:
+        """Parse ASS timestamp to seconds"""
+        # Format: H:MM:SS.cc
+        import re
+        match = re.match(r'(\d):(\d{2}):(\d{2})\.(\d{2})', time_str)
+        if match:
+            h, m, s, cs = map(int, match.groups())
+            return h * 3600 + m * 60 + s + cs / 100.0
+        return 0.0
 
     def format_time_srt(self, seconds: float) -> str:
         """Format time for SRT subtitles"""
