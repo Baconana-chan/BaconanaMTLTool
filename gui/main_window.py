@@ -16,6 +16,7 @@ from PyQt5.QtGui import QFont, QIcon, QPixmap
 
 import os
 import time
+from datetime import datetime, timedelta
 from core.translator import TranslationManager
 from core.config import ConfigManager
 from core.gui_config import GUIConfigManager
@@ -151,12 +152,40 @@ class MainWindow(QMainWindow):
     
     def __init__(self):
         super().__init__()
+        
+        # Initialize timing tracking
+        self.transcription_start_time = None
+        self.last_progress_update = None
+        
         self.config_manager = ConfigManager()
         self.gui_config_manager = GUIConfigManager()
         self.language_manager = LanguageManager()
         self.translation_manager = None
         self.setup_ui()
         self.load_config()
+    
+    def format_duration(self, seconds):
+        """Format duration in seconds to DD:HH:MM:SS format"""
+        if seconds is None or seconds <= 0:
+            return "00:00:00"
+        
+        delta = timedelta(seconds=int(seconds))
+        days = delta.days
+        hours, remainder = divmod(delta.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        if days > 0:
+            return f"{days:02d}:{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    def get_elapsed_time_str(self):
+        """Get formatted elapsed time string"""
+        if self.transcription_start_time is None:
+            return "00:00:00"
+        
+        elapsed = time.time() - self.transcription_start_time
+        return self.format_duration(elapsed)
         
     def setup_ui(self):
         """Setup the user interface"""
@@ -5586,6 +5615,16 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
         try:
             self.transcribe_btn.setEnabled(False)
             self.stop_transcription_btn.setEnabled(True)
+            
+            # Reset timing
+            self.transcription_start_time = None
+            
+            # Start periodic timer for UI updates (every 30 seconds)
+            if not hasattr(self, 'transcription_timer'):
+                self.transcription_timer = QTimer()
+                self.transcription_timer.timeout.connect(self.update_transcription_timer)
+            self.transcription_timer.start(30000)  # 30 seconds
+            
             self.transcription_progress.setValue(0)
             self.transcription_status.setText("Starting transcription...")
             
@@ -5598,21 +5637,42 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                 transcription_complete = pyqtSignal(object, str)
                 error_occurred = pyqtSignal(str)
                 
-                def __init__(self, processor, audio_file, provider, options):
+                def __init__(self, processor, audio_file, provider, options, parent_window):
                     super().__init__()
                     self.processor = processor
                     self.audio_file = audio_file
                     self.provider = provider
                     self.options = options
+                    self.parent_window = parent_window
+                    self.last_progress_time = None
+                    self.progress_update_interval = 60  # Update every 60 seconds minimum
                 
                 def run(self):
                     try:
+                        # Initialize timing in parent window
+                        self.parent_window.transcription_start_time = time.time()
+                        self.last_progress_time = time.time()
+                        
                         self.progress_updated.emit(5, "Initializing transcription...")
                         self.stage_progress_updated.emit("Initialization", 0, "Setting up transcription parameters")
                         
                         # Create enhanced progress callback for local models
                         def progress_callback(percent, message):
-                            # Map progress stages
+                            current_time = time.time()
+                            
+                            # Force update every 60-180 seconds or at major milestones
+                            should_update = (
+                                current_time - self.last_progress_time >= self.progress_update_interval or
+                                percent <= 10 or percent >= 90 or
+                                percent % 25 == 0  # Every 25% milestone
+                            )
+                            
+                            if not should_update:
+                                return
+                            
+                            self.last_progress_time = current_time
+                            
+                            # Map progress stages with better timing
                             if percent <= 10:
                                 stage = "Model Loading"
                                 stage_percent = percent * 10  # 0-10% -> 0-100%
@@ -5630,8 +5690,13 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                                 stage_percent = ((percent - 30) / 70) * 100  # 30-100% -> 0-100%
                                 overall_percent = 30 + ((percent - 30) * 0.65)  # 30-95%
                             
-                            self.stage_progress_updated.emit(stage, min(int(stage_percent), 100), message)
-                            self.progress_updated.emit(min(int(overall_percent), 95), f"{stage}: {message}")
+                            # Add timing information to message
+                            elapsed = current_time - self.parent_window.transcription_start_time
+                            elapsed_str = self.parent_window.format_duration(elapsed)
+                            enhanced_message = f"{message} (Elapsed: {elapsed_str})"
+                            
+                            self.stage_progress_updated.emit(stage, min(int(stage_percent), 100), enhanced_message)
+                            self.progress_updated.emit(min(int(overall_percent), 95), f"{stage}: {enhanced_message}")
                         
                         self.stage_progress_updated.emit("Initialization", 50, "Preparing audio processor")
                         
@@ -5682,8 +5747,12 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                         # Perform transcription
                         result = self.processor.transcribe_audio(self.audio_file, provider_key, **self.options)
                         
-                        self.stage_progress_updated.emit("Complete", 100, "Transcription finished successfully")
-                        self.progress_updated.emit(100, "Transcription complete")
+                        # Final update with total elapsed time
+                        final_elapsed = time.time() - self.parent_window.transcription_start_time
+                        final_elapsed_str = self.parent_window.format_duration(final_elapsed)
+                        
+                        self.stage_progress_updated.emit("Complete", 100, f"Transcription finished in {final_elapsed_str}")
+                        self.progress_updated.emit(100, f"Transcription complete in {final_elapsed_str}")
                         self.transcription_complete.emit(result, provider_key)
                         
                     except Exception as e:
@@ -5724,7 +5793,8 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                 self.audio_processor,
                 self.audio_file_edit.text(),
                 self.audio_provider_combo.currentText(),
-                options
+                options,
+                self  # Pass parent window for timing access
             )
             
             self.transcription_thread.progress_updated.connect(self.update_transcription_progress)
@@ -5736,16 +5806,54 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
         except Exception as e:
             self.on_transcription_error(str(e))
 
+    def update_transcription_timer(self):
+        """Update transcription time display periodically"""
+        if self.transcription_start_time and hasattr(self, 'transcription_time_label'):
+            elapsed_str = self.get_elapsed_time_str()
+            
+            # Update the status with current elapsed time if transcription is running
+            if hasattr(self, 'transcription_thread') and self.transcription_thread and self.transcription_thread.isRunning():
+                current_status = self.transcription_status.text()
+                # Update elapsed time in status if it contains timing info
+                if "Elapsed:" in current_status:
+                    # Replace the elapsed time part
+                    import re
+                    updated_status = re.sub(r'Elapsed: \d{2}:\d{2}:\d{2}', f'Elapsed: {elapsed_str}', current_status)
+                    self.transcription_status.setText(updated_status)
+                
+                if hasattr(self, 'transcription_time_label'):
+                    self.transcription_time_label.setText(f"Time: {elapsed_str}")
+
     def update_transcription_progress(self, value, status):
-        """Update transcription progress"""
+        """Update transcription progress with enhanced timing information"""
         self.transcription_progress.setValue(value)
-        self.transcription_status.setText(status)
         
-        # Update time estimation if status contains timing info
-        if "elapsed" in status or "remaining" in status:
-            self.transcription_time_label.setText(status)
-        elif value == 100:
-            self.transcription_time_label.setText("Transcription completed!")
+        # Get elapsed time
+        elapsed_str = self.get_elapsed_time_str()
+        
+        # Estimate remaining time if we have significant progress
+        if value > 10 and self.transcription_start_time:
+            elapsed = time.time() - self.transcription_start_time
+            if value > 0:
+                estimated_total = (elapsed / value) * 100
+                remaining = max(0, estimated_total - elapsed)
+                remaining_str = self.format_duration(remaining)
+                
+                # Enhanced status with timing
+                enhanced_status = f"{status} | Elapsed: {elapsed_str} | Est. Remaining: {remaining_str}"
+            else:
+                enhanced_status = f"{status} | Elapsed: {elapsed_str}"
+        else:
+            enhanced_status = f"{status} | Elapsed: {elapsed_str}"
+        
+        self.transcription_status.setText(enhanced_status)
+        
+        # Update time label separately for better visibility
+        if hasattr(self, 'transcription_time_label'):
+            if value == 100:
+                self.transcription_time_label.setText(f"Transcription completed in {elapsed_str}")
+            else:
+                self.transcription_time_label.setText(f"Time: {elapsed_str}")
 
     def update_stage_progress(self, stage_name, percent, message):
         """Update stage-specific progress"""
@@ -5763,6 +5871,10 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
     def on_transcription_complete(self, result, provider):
         """Handle completed transcription"""
         try:
+            # Stop the update timer
+            if hasattr(self, 'transcription_timer'):
+                self.transcription_timer.stop()
+            
             # Display preview
             self.transcription_preview.setText(result.text)
             
@@ -5823,6 +5935,10 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
 
     def on_transcription_error(self, error_msg):
         """Handle transcription error"""
+        # Stop the update timer
+        if hasattr(self, 'transcription_timer'):
+            self.transcription_timer.stop()
+            
         self.transcription_status.setText(f"✗ Error: {error_msg}")
         self.transcription_progress.setValue(0)
         self.transcribe_btn.setEnabled(True)
@@ -5832,6 +5948,10 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
 
     def stop_transcription(self):
         """Stop the transcription process"""
+        # Stop the update timer
+        if hasattr(self, 'transcription_timer'):
+            self.transcription_timer.stop()
+            
         if hasattr(self, 'transcription_thread') and self.transcription_thread.isRunning():
             self.transcription_thread.terminate()
             self.transcription_thread.wait()
