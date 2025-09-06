@@ -607,7 +607,7 @@ class AudioProcessor:
                                       beam_size: int = 5, temperature: float = 0.0,
                                       vad_filter: bool = True, word_timestamps: bool = False,
                                       repetition_penalty: float = 1.0, no_repeat_ngram_size: int = 0,
-                                      compression_ratio_threshold: float = 2.4, logprob_threshold: float = -1.0,
+                                      compression_ratio_threshold: float = 2.4,
                                       condition_on_previous_text: bool = True,
                                       progress_callback=None, **kwargs) -> TranscriptionResult:
         """Transcribe audio using local faster-whisper model"""
@@ -667,15 +667,11 @@ class AudioProcessor:
                 "word_timestamps": word_timestamps,
                 "repetition_penalty": repetition_penalty,
                 "compression_ratio_threshold": compression_ratio_threshold,
-                "logprob_threshold": logprob_threshold,
                 "condition_on_previous_text": condition_on_previous_text,
                 # Additional parameters to prevent context pollution
-                "prompt_reset_on_temperature": 0.5,  # Reset prompt when temperature sampling
                 "initial_prompt": None,  # Clear any initial prompt
-                "no_speech_threshold": 0.6,  # Filter out non-speech segments
                 "suppress_blank": True,  # Suppress blank outputs
                 "suppress_tokens": [-1],  # Suppress specific tokens
-                "max_initial_timestamp": 1.0  # Limit initial timestamp
             }
             
             # Add no_repeat_ngram_size only if it's greater than 0

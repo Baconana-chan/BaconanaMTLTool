@@ -1,0 +1,30 @@
+{
+    "visible_tabs": {
+        "config": true,
+        "translation": true,
+        "lightnovel": true,
+        "audio": true,
+        "character": false,
+        "novel": false,
+        "local": false,
+        "cloud": false,
+        "providers": true,
+        "advanced": false,
+        "documentation": true,
+        "about": true,
+        "log": true
+    },
+    "window": {
+        "width": 1600,
+        "height": 847,
+        "position_x": -1,
+        "position_y": -8,
+        "maximized": true
+    },
+    "preferences": {
+        "auto_save_tab_settings": true,
+        "remember_last_tab": true,
+        "theme": "default",
+        "font_size": 9
+    }
+}

@@ -27,6 +27,8 @@ class SegmentRetranscriptionThread(QThread):
     error_occurred = pyqtSignal(str)
     preview_ready = pyqtSignal(str)
     changes_applied = pyqtSignal()
+    progress_updated = pyqtSignal(int, str)
+    stage_progress_updated = pyqtSignal(str, int, str)
     
     def __init__(self, processor, audio_file, subtitle_file, start_time, end_time, 
                  provider, options, create_backup, preview_mode):
@@ -48,40 +50,76 @@ class SegmentRetranscriptionThread(QThread):
     
     def run(self):
         try:
+            self.progress_updated.emit(10, "Preparing segment extraction...")
+            self.stage_progress_updated.emit("Segment Extraction", 0, "Extracting audio segment")
+            
             # Step 1: Transcribe the segment
+            def segment_progress_callback(percent, message):
+                # Map segment transcription progress (20-80% of overall)
+                overall_percent = 20 + (percent * 0.6)
+                self.progress_updated.emit(int(overall_percent), f"Segment transcription: {message}")
+                
+                if percent <= 20:
+                    self.stage_progress_updated.emit("Audio Extraction", percent * 5, message)
+                elif percent <= 50:
+                    self.stage_progress_updated.emit("Transcription", (percent - 20) * 3.33, message)
+                else:
+                    self.stage_progress_updated.emit("Processing", (percent - 50) * 2, message)
+            
+            # Add progress callback to options
+            segment_options = self.options.copy()
+            segment_options['progress_callback'] = segment_progress_callback
+            
+            self.progress_updated.emit(20, "Starting segment transcription...")
             self.new_transcription = self.processor.transcribe_segment(
                 self.audio_file, self.start_time, self.end_time, 
-                self.provider, **self.options
+                self.provider, **segment_options
             )
             
+            self.progress_updated.emit(80, "Segment transcription complete")
+            
             if self.preview_mode:
+                self.stage_progress_updated.emit("Preview", 0, "Generating preview")
                 # Generate preview text
                 preview_text = self._generate_preview()
+                self.stage_progress_updated.emit("Preview", 100, "Preview ready")
                 self.preview_ready.emit(preview_text)
                 
                 # Wait for user decision
                 self.exec_()  # This will block until changes_applied is emitted
                 
                 if not self.apply_changes:
+                    self.progress_updated.emit(100, "Changes cancelled by user")
                     self.finished.emit(False, "Changes cancelled by user.")
                     return
             
             # Step 2: Apply changes to subtitle file
+            self.progress_updated.emit(85, "Applying changes to subtitle file...")
+            self.stage_progress_updated.emit("File Update", 0, "Updating subtitle file")
+            
             success = self.processor.update_subtitle_segment(
                 self.subtitle_file, self.start_time, self.end_time,
                 self.new_transcription, self.create_backup
             )
+            
+            self.stage_progress_updated.emit("File Update", 100, "Subtitle file updated")
             
             if success:
                 duration = self.end_time - self.start_time
                 message = f"Successfully updated segment {self.start_time:.2f}s - {self.end_time:.2f}s ({duration:.2f}s)"
                 if self.create_backup:
                     message += f"\nBackup created: {self.subtitle_file}.backup"
+                self.progress_updated.emit(100, "Segment update complete")
+                self.stage_progress_updated.emit("Complete", 100, "All changes applied successfully")
                 self.finished.emit(True, message)
             else:
+                self.progress_updated.emit(100, "Failed to update subtitle file")
+                self.stage_progress_updated.emit("Error", 0, "Failed to update subtitle file")
                 self.finished.emit(False, "Failed to update subtitle file.")
                 
         except Exception as e:
+            self.progress_updated.emit(100, f"Error: {str(e)}")
+            self.stage_progress_updated.emit("Error", 0, f"Exception: {str(e)}")
             self.error_occurred.emit(str(e))
     
     def apply_segment_changes(self):
@@ -1239,7 +1277,7 @@ class MainWindow(QMainWindow):
         local_settings_layout.addWidget(self.vad_filter_check, 2, 0, 1, 2)
         
         self.word_timestamps_check = QCheckBox("Word-level timestamps")
-        self.word_timestamps_check.setChecked(False)
+        self.word_timestamps_check.setChecked(True)
         self.word_timestamps_check.setToolTip("Generate timestamps for individual words.")
         local_settings_layout.addWidget(self.word_timestamps_check, 2, 2, 1, 2)
         
@@ -1421,9 +1459,21 @@ class MainWindow(QMainWindow):
         progress_group = QGroupBox("📊 Progress")
         progress_layout = QVBoxLayout(progress_group)
         
+        # Overall progress
+        overall_label = QLabel("Overall Progress:")
+        progress_layout.addWidget(overall_label)
         self.transcription_progress = QProgressBar()
         progress_layout.addWidget(self.transcription_progress)
         
+        # Stage-specific progress bars
+        self.stage_progress_label = QLabel("Current Stage: Ready")
+        progress_layout.addWidget(self.stage_progress_label)
+        
+        self.stage_progress = QProgressBar()
+        self.stage_progress.setVisible(False)
+        progress_layout.addWidget(self.stage_progress)
+        
+        # Status and time estimation
         self.transcription_status = QLabel("Ready to transcribe")
         progress_layout.addWidget(self.transcription_status)
         
@@ -1634,7 +1684,7 @@ class MainWindow(QMainWindow):
                 "beam_size": 5,
                 "temperature": 0.0,
                 "vad_filter": True,
-                "word_timestamps": False,
+                "word_timestamps": True,
                 "repetition_penalty": 1.1,
                 "compression_ratio_threshold": 2.4,
                 "no_repeat_ngram_size": 2,
@@ -1690,7 +1740,7 @@ class MainWindow(QMainWindow):
                 "beam_size": 8,
                 "temperature": 0.1,
                 "vad_filter": True,
-                "word_timestamps": False,
+                "word_timestamps": True,
                 "repetition_penalty": 1.3,
                 "compression_ratio_threshold": 2.8,
                 "no_repeat_ngram_size": 3,
@@ -5530,6 +5580,7 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             
             class TranscriptionThread(QThread):
                 progress_updated = pyqtSignal(int, str)
+                stage_progress_updated = pyqtSignal(str, int, str)  # stage_name, percent, message
                 transcription_complete = pyqtSignal(object, str)
                 error_occurred = pyqtSignal(str)
                 
@@ -5542,17 +5593,43 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                 
                 def run(self):
                     try:
-                        self.progress_updated.emit(25, "Initializing...")
+                        self.progress_updated.emit(5, "Initializing transcription...")
+                        self.stage_progress_updated.emit("Initialization", 0, "Setting up transcription parameters")
                         
-                        # Create progress callback for local models
+                        # Create enhanced progress callback for local models
                         def progress_callback(percent, message):
-                            self.progress_updated.emit(percent, message)
+                            # Map progress stages
+                            if percent <= 10:
+                                stage = "Model Loading"
+                                stage_percent = percent * 10  # 0-10% -> 0-100%
+                                overall_percent = 5 + (percent * 0.15)  # 5-20%
+                            elif percent <= 25:
+                                stage = "Audio Processing"
+                                stage_percent = (percent - 10) * 6.67  # 10-25% -> 0-100%
+                                overall_percent = 20 + ((percent - 10) * 0.33)  # 20-25%
+                            elif percent <= 30:
+                                stage = "VAD Processing" if "VAD" in message or "voice" in message.lower() else "Pre-processing"
+                                stage_percent = (percent - 25) * 20  # 25-30% -> 0-100%
+                                overall_percent = 25 + ((percent - 25) * 0.2)  # 25-30%
+                            else:
+                                stage = "Transcription"
+                                stage_percent = ((percent - 30) / 70) * 100  # 30-100% -> 0-100%
+                                overall_percent = 30 + ((percent - 30) * 0.65)  # 30-95%
+                            
+                            self.stage_progress_updated.emit(stage, min(int(stage_percent), 100), message)
+                            self.progress_updated.emit(min(int(overall_percent), 95), f"{stage}: {message}")
+                        
+                        self.stage_progress_updated.emit("Initialization", 50, "Preparing audio processor")
                         
                         # Add progress callback to options if using local models
                         if "Faster-Whisper" in self.provider or "Anime-Whisper" in self.provider:
                             self.options['progress_callback'] = progress_callback
                         
+                        self.stage_progress_updated.emit("Initialization", 100, "Ready to start")
+                        self.progress_updated.emit(10, "Configuration complete")
+                        
                         # Determine provider
+                        self.stage_progress_updated.emit("Provider Setup", 0, "Determining provider type")
                         provider_text = self.provider
                         if "OpenAI" in provider_text:
                             provider_key = "openai-whisper"
@@ -5579,16 +5656,24 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
                         else:
                             raise ValueError(f"Unsupported provider: {provider_text}")
                         
+                        self.stage_progress_updated.emit("Provider Setup", 100, f"Using {provider_text}")
+                        
+                        # Different progress handling for cloud vs local
                         if "Faster-Whisper" not in provider_text and "Anime-Whisper" not in provider_text:
-                            self.progress_updated.emit(50, "Transcribing audio...")
+                            self.progress_updated.emit(15, "Connecting to cloud service...")
+                            self.stage_progress_updated.emit("Cloud API", 0, "Uploading audio file")
+                            
+                        self.progress_updated.emit(20, "Starting transcription...")
                         
                         # Perform transcription
                         result = self.processor.transcribe_audio(self.audio_file, provider_key, **self.options)
                         
-                        self.progress_updated.emit(90, "Transcription complete")
+                        self.stage_progress_updated.emit("Complete", 100, "Transcription finished successfully")
+                        self.progress_updated.emit(100, "Transcription complete")
                         self.transcription_complete.emit(result, provider_key)
                         
                     except Exception as e:
+                        self.stage_progress_updated.emit("Error", 0, f"Failed: {str(e)}")
                         self.error_occurred.emit(str(e))
             
             if not self.audio_processor:
@@ -5629,6 +5714,7 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             )
             
             self.transcription_thread.progress_updated.connect(self.update_transcription_progress)
+            self.transcription_thread.stage_progress_updated.connect(self.update_stage_progress)
             self.transcription_thread.transcription_complete.connect(self.on_transcription_complete)
             self.transcription_thread.error_occurred.connect(self.on_transcription_error)
             self.transcription_thread.start()
@@ -5646,6 +5732,19 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             self.transcription_time_label.setText(status)
         elif value == 100:
             self.transcription_time_label.setText("Transcription completed!")
+
+    def update_stage_progress(self, stage_name, percent, message):
+        """Update stage-specific progress"""
+        self.stage_progress_label.setText(f"Current Stage: {stage_name}")
+        self.stage_progress.setValue(percent)
+        self.stage_progress.setVisible(True)
+        
+        # Update tooltip with detailed message
+        self.stage_progress.setToolTip(f"{stage_name}: {message}")
+        
+        # Hide stage progress when complete
+        if stage_name == "Complete" or stage_name == "Error":
+            QTimer.singleShot(2000, lambda: self.stage_progress.setVisible(False))
 
     def on_transcription_complete(self, result, provider):
         """Handle completed transcription"""
@@ -5812,6 +5911,8 @@ Max section length: {estimate.get('max_section_length', 5000)} characters
             self.segment_thread.finished.connect(self.on_segment_retranscription_finished)
             self.segment_thread.error_occurred.connect(self.on_segment_retranscription_error)
             self.segment_thread.preview_ready.connect(self.on_segment_preview_ready)
+            self.segment_thread.progress_updated.connect(self.update_transcription_progress)
+            self.segment_thread.stage_progress_updated.connect(self.update_stage_progress)
             self.segment_thread.start()
             
         except Exception as e:
