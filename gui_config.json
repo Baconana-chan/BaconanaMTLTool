@@ -3,6 +3,7 @@
         "config": true,
         "translation": true,
         "lightnovel": true,
+        "rpg_editor": true,
         "audio": true,
         "character": false,
         "novel": false,

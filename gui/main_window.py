@@ -268,6 +268,178 @@ class MainWindow(QMainWindow):
         
         elapsed = time.time() - self.transcription_start_time
         return self.format_duration(elapsed)
+    
+    def setup_rpg_maker_codes(self):
+        """Setup RPG Maker event code selection interface"""
+        try:
+            from core.rpg_maker_processor import RPGMakerProcessor
+            self.rpg_processor = RPGMakerProcessor()
+            
+            # Clear existing checkboxes
+            for checkbox in self.code_checkboxes.values():
+                checkbox.setParent(None)
+            self.code_checkboxes = {}
+            
+            # Get code categories
+            categories = self.rpg_processor.get_code_categories()
+            
+            # Category colors
+            category_colors = {
+                "main_dialogue": "#4CAF50",
+                "optional": "#2196F3", 
+                "variables": "#FF9800",
+                "other": "#9E9E9E"
+            }
+            
+            # Category descriptions
+            category_descriptions = {
+                "main_dialogue": "Essential dialogue and choice text (Recommended)",
+                "optional": "Character names and comments",
+                "variables": "Variable control text",
+                "other": "Advanced event codes"
+            }
+            
+            for category, codes in categories.items():
+                # Category header
+                header = QLabel(f"📁 {category.replace('_', ' ').title()}")
+                header.setStyleSheet(f"""
+                    font-weight: bold; 
+                    color: {category_colors.get(category, '#000')}; 
+                    font-size: 12px; 
+                    margin-top: 10px;
+                    margin-bottom: 5px;
+                """)
+                self.codes_layout.addWidget(header)
+                
+                # Category description
+                if category in category_descriptions:
+                    desc = QLabel(f"   {category_descriptions[category]}")
+                    desc.setStyleSheet("color: #666; font-size: 10px; margin-bottom: 5px;")
+                    self.codes_layout.addWidget(desc)
+                
+                # Code checkboxes for this category
+                for code_info in codes:
+                    checkbox_layout = QHBoxLayout()
+                    
+                    checkbox = QCheckBox(f"CODE {code_info.code}: {code_info.name}")
+                    checkbox.setChecked(code_info.recommended)
+                    checkbox.setToolTip(f"{code_info.description}\nCost Level: {code_info.cost_level.title()}")
+                    checkbox.toggled.connect(self.update_rpg_cost_estimate)
+                    
+                    # Style based on cost level
+                    if code_info.cost_level == "high":
+                        checkbox.setStyleSheet("color: #F44336; font-weight: bold;")
+                    elif code_info.cost_level == "medium":
+                        checkbox.setStyleSheet("color: #FF9800;")
+                    else:
+                        checkbox.setStyleSheet("color: #4CAF50;")
+                    
+                    self.code_checkboxes[code_info.code] = checkbox
+                    checkbox_layout.addWidget(checkbox)
+                    
+                    # Cost indicator
+                    cost_label = QLabel(f"[{code_info.cost_level.upper()}]")
+                    cost_colors = {"low": "#4CAF50", "medium": "#FF9800", "high": "#F44336"}
+                    cost_label.setStyleSheet(f"color: {cost_colors[code_info.cost_level]}; font-weight: bold; font-size: 9px;")
+                    checkbox_layout.addWidget(cost_label)
+                    
+                    checkbox_layout.addStretch()
+                    self.codes_layout.addLayout(checkbox_layout)
+            
+            # Update enabled codes
+            self.update_rpg_enabled_codes()
+            
+        except ImportError as e:
+            error_label = QLabel(f"Error loading RPG Maker processor: {e}")
+            error_label.setStyleSheet("color: red;")
+            self.codes_layout.addWidget(error_label)
+    
+    def set_rpg_recommended_codes(self):
+        """Set only recommended codes"""
+        if not self.rpg_processor:
+            return
+            
+        recommended = self.rpg_processor.get_recommended_codes()
+        for code, checkbox in self.code_checkboxes.items():
+            checkbox.setChecked(code in recommended)
+        self.update_rpg_enabled_codes()
+    
+    def set_rpg_dialogue_only(self):
+        """Set only main dialogue codes"""
+        dialogue_codes = {401, 405, 102}  # Show Text, Show Text (Scrolling), Show Choices
+        for code, checkbox in self.code_checkboxes.items():
+            checkbox.setChecked(code in dialogue_codes)
+        self.update_rpg_enabled_codes()
+    
+    def set_rpg_all_codes(self):
+        """Enable all available codes"""
+        for checkbox in self.code_checkboxes.values():
+            checkbox.setChecked(True)
+        self.update_rpg_enabled_codes()
+    
+    def update_rpg_enabled_codes(self):
+        """Update enabled codes in processor based on checkboxes"""
+        if not self.rpg_processor:
+            return
+            
+        enabled_codes = set()
+        for code, checkbox in self.code_checkboxes.items():
+            if checkbox.isChecked():
+                enabled_codes.add(code)
+        
+        self.rpg_processor.set_enabled_codes(enabled_codes)
+        self.update_rpg_cost_estimate()
+    
+    def update_rpg_cost_estimate(self):
+        """Update cost estimation display"""
+        if not self.rpg_processor:
+            return
+        
+        # Check if cost_estimate_label exists yet
+        if not hasattr(self, 'cost_estimate_label'):
+            return
+            
+        enabled_codes = self.rpg_processor.get_enabled_codes()
+        if not enabled_codes:
+            self.cost_estimate_label.setText("No codes selected. Translation will not process any events.")
+            self.cost_estimate_label.setStyleSheet("background-color: #ffebee; padding: 10px; border-radius: 5px; color: #c62828;")
+            return
+        
+        # Basic cost estimate without scanning files
+        low_cost = medium_cost = high_cost = 0
+        for code in enabled_codes:
+            code_info = self.rpg_processor.get_code_info(code)
+            if code_info:
+                if code_info.cost_level == "low":
+                    low_cost += 1
+                elif code_info.cost_level == "medium":
+                    medium_cost += 1
+                elif code_info.cost_level == "high":
+                    high_cost += 1
+        
+        estimate_text = f"📊 Selected Codes: {len(enabled_codes)}\n"
+        estimate_text += f"   • Low cost codes: {low_cost}\n"
+        estimate_text += f"   • Medium cost codes: {medium_cost}\n"
+        estimate_text += f"   • High cost codes: {high_cost}\n\n"
+        
+        if high_cost > 0:
+            estimate_text += "⚠️ WARNING: High-cost codes selected!\n"
+            estimate_text += "Consider disabling comment codes (408, 108) to reduce translation costs."
+            bg_color = "#fff3e0"
+            text_color = "#ef6c00"
+        elif medium_cost > 0:
+            estimate_text += "💡 Medium cost translation selected."
+            bg_color = "#f3e5f5"
+            text_color = "#7b1fa2"
+        else:
+            estimate_text += "✅ Optimal cost configuration."
+            bg_color = "#e8f5e8"
+            text_color = "#2e7d32"
+        
+        # Only update if the label exists
+        if hasattr(self, 'cost_estimate_label'):
+            self.cost_estimate_label.setText(estimate_text)
+            self.cost_estimate_label.setStyleSheet(f"background-color: {bg_color}; padding: 10px; border-radius: 5px; color: {text_color}; font-family: monospace;")
         
     def setup_ui(self):
         """Setup the user interface"""
@@ -314,6 +486,7 @@ class MainWindow(QMainWindow):
             'config': {'name': '⚙️ Config', 'setup_func': self.setup_config_tab, 'default_visible': True},
             'translation': {'name': '🌐 Translation', 'setup_func': self.setup_translation_tab, 'default_visible': True},
             'lightnovel': {'name': '📚 Light Novel', 'setup_func': self.setup_lightnovel_tab, 'default_visible': True},
+            'rpg_editor': {'name': '✏️ RPG Maker Editor', 'setup_func': self.setup_rpg_editor_tab, 'default_visible': True},
             'audio': {'name': '🎵 Audio & Subtitles', 'setup_func': self.setup_audio_tab, 'default_visible': False},
             'character': {'name': '👥 Character Generator', 'setup_func': self.setup_character_tab, 'default_visible': False},
             'novel': {'name': '📝 Novel Writing', 'setup_func': self.setup_novel_writing_tab, 'default_visible': False},
@@ -329,6 +502,9 @@ class MainWindow(QMainWindow):
         
         # Create tabs
         self.create_tabs()
+        
+        # Initialize RPG Maker frame container
+        self.rpg_frame = None
         
         
         # Status bar
@@ -812,9 +988,22 @@ class MainWindow(QMainWindow):
         file_group = QGroupBox("📁 File Selection")
         file_layout = QVBoxLayout(file_group)
         
-        # Input directory
+        # Selection mode
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Selection Mode:"))
+        
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["📂 Directory (Batch)", "📄 Single File"])
+        self.mode_combo.currentTextChanged.connect(self.on_selection_mode_changed)
+        mode_layout.addWidget(self.mode_combo)
+        
+        mode_layout.addStretch()
+        file_layout.addLayout(mode_layout)
+        
+        # Input directory/file
         input_layout = QHBoxLayout()
-        input_layout.addWidget(QLabel("Game Directory:"))
+        self.input_label = QLabel("Game Directory:")
+        input_layout.addWidget(self.input_label)
         self.input_dir_edit = QLineEdit()
         self.input_dir_edit.setPlaceholderText("Select game root folder (RPG Maker: www/data or data | Ren'Py: game folder)")
         input_layout.addWidget(self.input_dir_edit)
@@ -885,6 +1074,58 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(options_group)
         
+        # RPG Maker Event Codes Configuration
+        self.rpg_maker_group = QGroupBox("🎮 RPG Maker Event Codes Configuration")
+        self.rpg_maker_group.setVisible(False)  # Initially hidden
+        rpg_layout = QVBoxLayout(self.rpg_maker_group)
+        
+        # Description
+        desc_label = QLabel("Select which event codes to include in translation. Recommended codes are pre-selected for optimal cost/quality balance.")
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: #666; margin-bottom: 10px;")
+        rpg_layout.addWidget(desc_label)
+        
+        # Quick preset buttons
+        preset_layout = QHBoxLayout()
+        self.rpg_recommended_btn = QPushButton("✅ Recommended Only")
+        self.rpg_recommended_btn.clicked.connect(self.set_rpg_recommended_codes)
+        self.rpg_recommended_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px;")
+        
+        self.rpg_all_btn = QPushButton("📝 All Codes")
+        self.rpg_all_btn.clicked.connect(self.set_rpg_all_codes)
+        self.rpg_all_btn.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 5px;")
+        
+        self.rpg_dialogue_only_btn = QPushButton("💬 Dialogue Only")
+        self.rpg_dialogue_only_btn.clicked.connect(self.set_rpg_dialogue_only)
+        self.rpg_dialogue_only_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 5px;")
+        
+        preset_layout.addWidget(self.rpg_recommended_btn)
+        preset_layout.addWidget(self.rpg_dialogue_only_btn)
+        preset_layout.addWidget(self.rpg_all_btn)
+        preset_layout.addStretch()
+        rpg_layout.addLayout(preset_layout)
+        
+        # Event codes selection
+        codes_scroll = QScrollArea()
+        codes_widget = QWidget()
+        self.codes_layout = QVBoxLayout(codes_widget)
+        
+        # Initialize RPG Maker processor and setup code checkboxes
+        self.rpg_processor = None
+        self.code_checkboxes = {}
+        self.setup_rpg_maker_codes()
+        
+        codes_scroll.setWidget(codes_widget)
+        codes_scroll.setMaximumHeight(300)
+        rpg_layout.addWidget(codes_scroll)
+        
+        # Cost estimation display
+        self.cost_estimate_label = QLabel("Cost estimation will appear here after selecting codes and directory.")
+        self.cost_estimate_label.setStyleSheet("background-color: #f0f0f0; padding: 10px; border-radius: 5px; font-family: monospace;")
+        rpg_layout.addWidget(self.cost_estimate_label)
+        
+        layout.addWidget(self.rpg_maker_group)
+        
         # Progress section
         progress_group = QGroupBox("📊 Translation Progress")
         progress_layout = QVBoxLayout(progress_group)
@@ -949,6 +1190,30 @@ class MainWindow(QMainWindow):
         layout.addLayout(control_layout)
         
         tab_widget.addTab(trans_widget, "🌐 Game Translation")
+        
+    def on_rpg_file_updated(self, file_path):
+        """Handle RPG Maker file update from editor"""
+        self.log_message(f"RPG Maker file updated: {os.path.basename(file_path)}")
+    
+    def on_selection_mode_changed(self, mode):
+        """Handle selection mode change between directory and single file"""
+        if "Single File" in mode:
+            self.input_label.setText("Game File:")
+            self.input_dir_edit.setPlaceholderText("Select a single RPG Maker JSON file (Map001.json, CommonEvents.json, etc.)")
+            self.browse_input_btn.setText("📄 Browse File")
+        else:
+            self.input_label.setText("Game Directory:")
+            self.input_dir_edit.setPlaceholderText("Select game root folder (RPG Maker: www/data or data | Ren'Py: game folder)")
+            self.browse_input_btn.setText("📂 Browse")
+        
+        # Clear current selection when mode changes
+        self.input_dir_edit.clear()
+        self.project_type_label.setText("Project type will be auto-detected")
+        self.project_type_label.setStyleSheet("color: #666; font-style: italic;")
+        
+        # Hide RPG Maker group when mode changes
+        if hasattr(self, 'rpg_maker_group'):
+            self.rpg_maker_group.setVisible(False)
         
     def setup_lightnovel_tab(self, tab_widget):
         """Setup light novel translation tab with scroll area"""
@@ -1181,6 +1446,25 @@ class MainWindow(QMainWindow):
         self.model_combo.currentTextChanged.connect(self.update_model_recommendations)
         
         tab_widget.addTab(ln_widget, "📚 Light Novel")
+    
+    def setup_rpg_editor_tab(self, tab_widget):
+        """Setup optimized RPG Maker file editor tab"""
+        try:
+            from gui.rpg_editor import LargeFileRPGEditor
+            self.rpg_editor = LargeFileRPGEditor()
+            tab_widget.addTab(self.rpg_editor, "✏️ RPG Editor")
+        except ImportError as e:
+            # Fallback if optimized editor is not available
+            fallback_widget = QWidget()
+            layout = QVBoxLayout(fallback_widget)
+            
+            error_label = QLabel(f"❌ RPG Editor not available: {str(e)}\n\n"
+                                "The optimized RPG Maker editor requires additional components.")
+            error_label.setWordWrap(True)
+            error_label.setStyleSheet("color: red; padding: 20px; background-color: #ffebee; border-radius: 5px;")
+            layout.addWidget(error_label)
+            
+            tab_widget.addTab(fallback_widget, "✏️ RPG Editor")
     
     def setup_audio_tab(self, tab_widget):
         """Setup audio transcription and subtitles tab"""
@@ -3100,11 +3384,58 @@ class MainWindow(QMainWindow):
             self.api_key_edit.setEchoMode(QLineEdit.Password)
     
     def browse_input_directory(self):
-        """Browse for input directory"""
-        directory = QFileDialog.getExistingDirectory(self, "Select Game Directory")
-        if directory:
-            self.input_dir_edit.setText(directory)
-            self.detect_project_type(directory)
+        """Browse for input directory or file based on selected mode"""
+        if hasattr(self, 'mode_combo') and "Single File" in self.mode_combo.currentText():
+            # Single file mode
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, 
+                "Select Game File",
+                "",
+                "JSON Files (*.json);;Text Files (*.txt);;All Files (*)"
+            )
+            if file_path:
+                self.input_dir_edit.setText(file_path)
+                self.detect_single_file_type(file_path)
+        else:
+            # Directory mode (original behavior)
+            directory = QFileDialog.getExistingDirectory(self, "Select Game Directory")
+            if directory:
+                self.input_dir_edit.setText(directory)
+                self.detect_project_type(directory)
+    
+    def detect_single_file_type(self, file_path):
+        """Detect project type for a single file"""
+        try:
+            file_name = os.path.basename(file_path).lower()
+            
+            if file_path.endswith('.json'):
+                # Check if it's an RPG Maker file
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                # RPG Maker files typically have specific structures
+                if any(pattern in file_name for pattern in ['map', 'common', 'system', 'actors', 'classes']):
+                    self.project_type_label.setText("✅ RPG Maker JSON file detected")
+                    self.project_type_label.setStyleSheet("color: #2196F3; font-weight: bold;")
+                    if hasattr(self, 'rpg_maker_group'):
+                        self.rpg_maker_group.setVisible(True)
+                    self.update_rpg_cost_estimate()
+                else:
+                    self.project_type_label.setText("📄 JSON file selected")
+                    self.project_type_label.setStyleSheet("color: #FF9800; font-weight: bold;")
+                    if hasattr(self, 'rpg_maker_group'):
+                        self.rpg_maker_group.setVisible(False)
+            else:
+                self.project_type_label.setText("📄 File selected")
+                self.project_type_label.setStyleSheet("color: #FF9800; font-weight: bold;")
+                if hasattr(self, 'rpg_maker_group'):
+                    self.rpg_maker_group.setVisible(False)
+                    
+        except Exception as e:
+            self.project_type_label.setText("⚠️ Error reading file")
+            self.project_type_label.setStyleSheet("color: #f44336; font-weight: bold;")
+            if hasattr(self, 'rpg_maker_group'):
+                self.rpg_maker_group.setVisible(False)
     
     def detect_project_type(self, directory):
         """Detect and display project type"""
@@ -3136,60 +3467,89 @@ class MainWindow(QMainWindow):
         if self.detect_lightnovel_project(directory, lightnovel_processor):
             self.project_type_label.setText("✅ Light Novel project detected")
             self.project_type_label.setStyleSheet("color: #8E24AA; font-weight: bold;")
-        elif renpy_processor.detect_renpy_project(directory):
-            self.project_type_label.setText("✅ Ren'Py project detected")
-            self.project_type_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
-        elif unity_processor.detect_unity_project(directory):
-            self.project_type_label.setText("✅ Unity project detected")
-            self.project_type_label.setStyleSheet("color: #9C27B0; font-weight: bold;")
-        elif wolf_processor.detect_wolf_project(directory):
-            self.project_type_label.setText("✅ Wolf RPG Editor project detected")
-            self.project_type_label.setStyleSheet("color: #FF5722; font-weight: bold;")
-        elif kirikiri_processor.detect_kirikiri_project(directory):
-            self.project_type_label.setText("✅ KiriKiri project detected")
-            self.project_type_label.setStyleSheet("color: #3F51B5; font-weight: bold;")
-        elif nscripter_processor.detect_nscripter_project(directory):
-            self.project_type_label.setText("✅ NScripter project detected")
-            self.project_type_label.setStyleSheet("color: #009688; font-weight: bold;")
-        elif len(livemaker_processor.find_livemaker_files(directory)) > 0:
-            self.project_type_label.setText("✅ Live Maker project detected")
-            self.project_type_label.setStyleSheet("color: #E91E63; font-weight: bold;")
-        elif len(tyranobuilder_processor.find_tyranobuilder_files(directory)) > 0:
-            self.project_type_label.setText("✅ TyranoBuilder project detected")
-            self.project_type_label.setStyleSheet("color: #9C27B0; font-weight: bold;")
-        elif len(srpg_studio_processor.find_srpg_studio_files(directory)) > 0:
-            self.project_type_label.setText("✅ SRPG Studio project detected")
-            self.project_type_label.setStyleSheet("color: #607D8B; font-weight: bold;")
-        elif len(lune_processor.find_lune_files(directory)) > 0:
-            self.project_type_label.setText("✅ Lune project detected")
-            self.project_type_label.setStyleSheet("color: #FF9800; font-weight: bold;")
-        elif len(regex_processor.find_regex_files(directory)) > 0:
-            self.project_type_label.setText("✅ Regex project detected")
-            self.project_type_label.setStyleSheet("color: #CDDC39; font-weight: bold;")
+            if hasattr(self, 'rpg_maker_group'):
+                self.rpg_maker_group.setVisible(False)
         elif self.detect_rpg_maker_project(directory):
             self.project_type_label.setText("✅ RPG Maker project detected")
             self.project_type_label.setStyleSheet("color: #2196F3; font-weight: bold;")
+            # Show RPG Maker configuration options
+            if hasattr(self, 'rpg_maker_group'):
+                self.rpg_maker_group.setVisible(True)
+            self.update_rpg_cost_estimate()
+        elif renpy_processor.detect_renpy_project(directory):
+            self.project_type_label.setText("✅ Ren'Py project detected")
+            self.project_type_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+            if hasattr(self, 'rpg_maker_group'):
+                self.rpg_maker_group.setVisible(False)
+        elif unity_processor.detect_unity_project(directory):
+            self.project_type_label.setText("✅ Unity project detected")
+            self.project_type_label.setStyleSheet("color: #9C27B0; font-weight: bold;")
+            self.rpg_maker_group.setVisible(False)
+        elif wolf_processor.detect_wolf_project(directory):
+            self.project_type_label.setText("✅ Wolf RPG Editor project detected")
+            self.project_type_label.setStyleSheet("color: #FF5722; font-weight: bold;")
+            self.rpg_maker_group.setVisible(False)
+        elif kirikiri_processor.detect_kirikiri_project(directory):
+            self.project_type_label.setText("✅ KiriKiri project detected")
+            self.project_type_label.setStyleSheet("color: #3F51B5; font-weight: bold;")
+            self.rpg_maker_group.setVisible(False)
+        elif nscripter_processor.detect_nscripter_project(directory):
+            self.project_type_label.setText("✅ NScripter project detected")
+            self.project_type_label.setStyleSheet("color: #009688; font-weight: bold;")
+            self.rpg_maker_group.setVisible(False)
+        elif len(livemaker_processor.find_livemaker_files(directory)) > 0:
+            self.project_type_label.setText("✅ Live Maker project detected")
+            self.project_type_label.setStyleSheet("color: #E91E63; font-weight: bold;")
+            self.rpg_maker_group.setVisible(False)
+        elif len(tyranobuilder_processor.find_tyranobuilder_files(directory)) > 0:
+            self.project_type_label.setText("✅ TyranoBuilder project detected")
+            self.project_type_label.setStyleSheet("color: #9C27B0; font-weight: bold;")
+            self.rpg_maker_group.setVisible(False)
+        elif len(srpg_studio_processor.find_srpg_studio_files(directory)) > 0:
+            self.project_type_label.setText("✅ SRPG Studio project detected")
+            self.project_type_label.setStyleSheet("color: #607D8B; font-weight: bold;")
+            self.rpg_maker_group.setVisible(False)
+        elif len(lune_processor.find_lune_files(directory)) > 0:
+            self.project_type_label.setText("✅ Lune project detected")
+            self.project_type_label.setStyleSheet("color: #FF9800; font-weight: bold;")
+            self.rpg_maker_group.setVisible(False)
+        elif len(regex_processor.find_regex_files(directory)) > 0:
+            self.project_type_label.setText("✅ Regex project detected")
+            self.project_type_label.setStyleSheet("color: #CDDC39; font-weight: bold;")
+            self.rpg_maker_group.setVisible(False)
+        elif self.detect_rpg_maker_project(directory):
+            self.project_type_label.setText("✅ RPG Maker project detected")
+            self.project_type_label.setStyleSheet("color: #2196F3; font-weight: bold;")
+            # Show RPG Maker configuration options
+            self.rpg_maker_group.setVisible(True)
+            self.update_rpg_cost_estimate()
         else:
             self.project_type_label.setText("⚠️ No supported project detected")
             self.project_type_label.setStyleSheet("color: #FF9800; font-weight: bold;")
+            # Hide RPG Maker configuration for non-RPG Maker projects
+            self.rpg_maker_group.setVisible(False)
     
     def detect_rpg_maker_project(self, directory):
         """Detect if directory contains RPG Maker project"""
         # Check for common paths
         possible_paths = [
-            os.path.join(directory, 'www', 'data'),
-            os.path.join(directory, 'data'),
-            os.path.join(directory, 'www', 'js', 'plugins')
+            os.path.join(directory, 'www', 'data'),  # RPG Maker MV in www/data
+            os.path.join(directory, 'data'),         # RPG Maker MZ in data or direct data folder
+            directory                                # If user selected data folder directly
         ]
         
         for path in possible_paths:
             if os.path.exists(path):
-                # Look for RPG Maker JSON files
-                for file in os.listdir(path):
-                    if file.endswith('.json') and any(
-                        pattern in file for pattern in ['Map', 'CommonEvents', 'System']
-                    ):
-                        return True
+                try:
+                    # Look for RPG Maker JSON files
+                    for file in os.listdir(path):
+                        if file.endswith('.json') and any(
+                            pattern in file for pattern in ['Map', 'CommonEvents', 'System', 'Actors', 'Classes']
+                        ):
+                            return True
+                except (PermissionError, OSError):
+                    continue
+        
         return False
     
     def detect_lightnovel_project(self, directory, lightnovel_processor):
