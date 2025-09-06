@@ -1272,7 +1272,7 @@ class MainWindow(QMainWindow):
         
         # Additional options
         self.vad_filter_check = QCheckBox("Voice Activity Detection (VAD)")
-        self.vad_filter_check.setChecked(True)
+        self.vad_filter_check.setChecked(False)
         self.vad_filter_check.setToolTip("Filter out non-speech segments.")
         local_settings_layout.addWidget(self.vad_filter_check, 2, 0, 1, 2)
         
@@ -1683,7 +1683,7 @@ class MainWindow(QMainWindow):
                 "provider": "Faster-Whisper Base (Free)",
                 "beam_size": 5,
                 "temperature": 0.0,
-                "vad_filter": True,
+                "vad_filter": False,
                 "word_timestamps": True,
                 "repetition_penalty": 1.1,
                 "compression_ratio_threshold": 2.4,
@@ -1711,7 +1711,7 @@ class MainWindow(QMainWindow):
                 "provider": "Faster-Whisper Medium (Free)",
                 "beam_size": 5,
                 "temperature": 0.0,
-                "vad_filter": True,
+                "vad_filter": False,
                 "word_timestamps": True,
                 "repetition_penalty": 1.1,
                 "compression_ratio_threshold": 2.4,
@@ -1739,7 +1739,7 @@ class MainWindow(QMainWindow):
                 "provider": "Faster-Whisper Large-V2 (Free)",
                 "beam_size": 8,
                 "temperature": 0.1,
-                "vad_filter": True,
+                "vad_filter": False,
                 "word_timestamps": True,
                 "repetition_penalty": 1.3,
                 "compression_ratio_threshold": 2.8,
@@ -1753,7 +1753,7 @@ class MainWindow(QMainWindow):
                 "provider": "Faster-Whisper Tiny (Free)",
                 "beam_size": 1,
                 "temperature": 0.0,
-                "vad_filter": True,
+                "vad_filter": False,
                 "word_timestamps": False,
                 "repetition_penalty": 1.1,
                 "compression_ratio_threshold": 2.4,
@@ -1767,7 +1767,7 @@ class MainWindow(QMainWindow):
                 "provider": "Faster-Whisper Large-V2 (Free)",
                 "beam_size": 10,
                 "temperature": 0.0,
-                "vad_filter": True,
+                "vad_filter": False,
                 "word_timestamps": True,
                 "repetition_penalty": 1.1,
                 "compression_ratio_threshold": 2.4,
@@ -1776,6 +1776,20 @@ class MainWindow(QMainWindow):
                 "force_cleanup": True,
                 "max_segment_length": 300,
                 "description": "Maximum accuracy with balanced settings. Model cleanup ensures consistent quality."
+            },
+            "🔇 VAD Speech-Only (Experimental)": {
+                "provider": "Faster-Whisper Medium (Free)",
+                "beam_size": 5,
+                "temperature": 0.0,
+                "vad_filter": True,
+                "word_timestamps": True,
+                "repetition_penalty": 1.1,
+                "compression_ratio_threshold": 2.4,
+                "no_repeat_ngram_size": 2,
+                "condition_on_previous_text": True,
+                "force_cleanup": True,
+                "max_segment_length": 250,
+                "description": "⚠️ Voice Activity Detection enabled. May cause timing issues! Use only for speech detection in noisy audio."
             }
         }
         

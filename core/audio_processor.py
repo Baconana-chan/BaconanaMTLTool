@@ -464,18 +464,23 @@ class AudioProcessor:
                         min_speech_duration_ms: int = 250,
                         min_silence_duration_ms: int = 100,
                         window_size_samples: int = 1536,
-                        speech_pad_ms: int = 30) -> str:
-        """Apply Silero VAD to filter out non-speech segments"""
+                        speech_pad_ms: int = 30,
+                        return_timestamps: bool = False) -> str:
+        """Apply Silero VAD to filter out non-speech segments
+        
+        Args:
+            return_timestamps: If True, return speech timestamps instead of filtered audio
+        """
         if not SILERO_VAD_AVAILABLE:
             self.logger.warning("Silero VAD not available, returning original audio")
-            return audio_file
+            return audio_file if not return_timestamps else []
             
         try:
             # Load Silero VAD model
             model, utils = load_silero_vad()
             if model is None:
                 self.logger.warning("Failed to load Silero VAD model, returning original audio")
-                return audio_file
+                return audio_file if not return_timestamps else []
             
             # Load audio using ffmpeg to avoid torchaudio backend issues
             try:
@@ -533,7 +538,20 @@ class AudioProcessor:
             
             if not speech_timestamps:
                 self.logger.warning("No speech detected by Silero VAD, returning original audio")
-                return audio_file
+                return audio_file if not return_timestamps else []
+            
+            # If only timestamps are requested, return them
+            if return_timestamps:
+                # Convert sample-based timestamps to time-based
+                time_timestamps = []
+                for timestamp in speech_timestamps:
+                    start_time = timestamp['start'] / sr
+                    end_time = timestamp['end'] / sr
+                    time_timestamps.append({
+                        'start': start_time,
+                        'end': end_time
+                    })
+                return time_timestamps
             
             # Merge speech segments
             speech_segments = []
@@ -639,22 +657,23 @@ class AudioProcessor:
             # Apply Silero VAD if requested and available
             processed_audio_file = audio_file
             vad_temp_file = None
+            vad_timestamps = None
             
             if vad_filter and self.can_use_vad_filter():
                 if progress_callback:
                     progress_callback(15, "Applying voice activity detection...")
                 
-                processed_audio_file = self.apply_silero_vad(
+                # Get speech timestamps instead of filtering audio
+                vad_timestamps = self.apply_silero_vad(
                     audio_file,
                     threshold=kwargs.get('vad_threshold', 0.5),
                     min_speech_duration_ms=kwargs.get('min_speech_duration_ms', 250),
                     min_silence_duration_ms=kwargs.get('min_silence_duration_ms', 100),
-                    speech_pad_ms=kwargs.get('speech_pad_ms', 30)
+                    speech_pad_ms=kwargs.get('speech_pad_ms', 30),
+                    return_timestamps=True  # Get timestamps instead of filtered audio
                 )
                 
-                # Keep track of temp file for cleanup
-                if processed_audio_file != audio_file:
-                    vad_temp_file = processed_audio_file
+                self.logger.info(f"VAD detected {len(vad_timestamps) if vad_timestamps else 0} speech segments")
                     
             elif vad_filter and not self.can_use_vad_filter():
                 self.logger.warning("VAD filter requested but Silero VAD not available. Disabling VAD filter.")
@@ -706,6 +725,28 @@ class AudioProcessor:
                 segment_start = segment.start if segment.start is not None else 0.0
                 segment_end = segment.end if segment.end is not None else segment_start + 1.0
                 current_text = segment.text.strip()
+                
+                # If VAD is enabled, check if segment overlaps with speech regions
+                if vad_timestamps and vad_timestamps:
+                    segment_has_speech = False
+                    for vad_segment in vad_timestamps:
+                        # Check if transcription segment overlaps with VAD speech segment
+                        vad_start = vad_segment['start']
+                        vad_end = vad_segment['end']
+                        
+                        # Check for overlap (with some tolerance)
+                        overlap_start = max(segment_start, vad_start)
+                        overlap_end = min(segment_end, vad_end)
+                        
+                        if overlap_end > overlap_start:
+                            # There's an overlap - this segment contains speech
+                            segment_has_speech = True
+                            break
+                    
+                    # Skip segments that don't contain speech according to VAD
+                    if not segment_has_speech:
+                        self.logger.debug(f"Skipping non-speech segment: '{current_text}' at {segment_start:.2f}s-{segment_end:.2f}s")
+                        continue
                 
                 # Skip if text is very similar to previous segment
                 if previous_text and self._text_similarity(current_text, previous_text) > duplicate_threshold:
