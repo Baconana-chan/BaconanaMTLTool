@@ -109,8 +109,31 @@ class TranslationManager(QThread):
         self.file_threads = int(config.get('fileThreads', 1))
         self.translation_threads = int(config.get('threads', 1))
         
+        # Clean and normalize output directory path
+        output_dir = self._clean_directory_path(output_dir)
+        self.output_dir = output_dir
+        
         # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except (OSError, FileNotFoundError) as e:
+            # If path creation fails, use a safe fallback
+            safe_output_dir = os.path.join(os.path.expanduser("~"), "MTL_Output")
+            os.makedirs(safe_output_dir, exist_ok=True)
+            self.output_dir = safe_output_dir
+            print(f"Warning: Could not create output directory '{output_dir}': {e}")
+            print(f"Using fallback directory: {safe_output_dir}")
+    
+    def _clean_directory_path(self, path: str) -> str:
+        """Clean directory path by removing invalid characters"""
+        import re
+        # Remove or replace invalid characters for Windows paths
+        cleaned = re.sub(r'[<>:"|?*]', '_', path)
+        # Replace multiple backslashes with single ones
+        cleaned = re.sub(r'\\\\+', '\\\\', cleaned)
+        # Remove trailing spaces and dots
+        cleaned = cleaned.rstrip(' .')
+        return cleaned
     
     def setup_providers(self, provider_configs: Dict[str, Dict[str, Any]]):
         """Setup multiple providers with configurations"""
