@@ -553,10 +553,25 @@ Translate the following text to English while maintaining:
         
         for chapter in chapters:
             if isinstance(chapter, dict) and "content" in chapter:
+                content = chapter["content"]
+                # Debug: Check content type
+                if not isinstance(content, str):
+                    print(f"Warning: Chapter content is not a string: {type(content)}")
+                    continue
+                    
                 # Split content into paragraphs for better translation
-                paragraphs = self._split_into_paragraphs(chapter["content"])
+                paragraphs = self._split_into_paragraphs(content)
+                
+                # Debug: Check paragraphs type
+                if not isinstance(paragraphs, list):
+                    print(f"Warning: Paragraphs is not a list: {type(paragraphs)}")
+                    continue
                 
                 for i, paragraph in enumerate(paragraphs):
+                    if not isinstance(paragraph, str):
+                        print(f"Warning: Paragraph {i} is not a string: {type(paragraph)}")
+                        continue
+                        
                     if self._contains_japanese(paragraph):
                         translatable_content.append({
                             "id": f"{chapter['id']}_para_{i + 1}",

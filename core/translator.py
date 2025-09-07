@@ -124,25 +124,25 @@ class TranslationManager(QThread):
             
             # Handle different project types
             if self.is_lightnovel_project:
-                self.process_lightnovel_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_lightnovel_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             elif self.is_unity_project:
-                self.process_unity_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_unity_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             elif self.is_wolf_project:
-                self.process_wolf_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_wolf_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             elif self.is_kirikiri_project:
-                self.process_kirikiri_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_kirikiri_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             elif self.is_nscripter_project:
-                self.process_nscripter_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_nscripter_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             elif self.is_livemaker_project:
-                self.process_livemaker_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_livemaker_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             elif self.is_tyranobuilder_project:
-                self.process_tyranobuilder_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_tyranobuilder_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             elif self.is_srpg_studio_project:
-                self.process_srpg_studio_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_srpg_studio_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             elif self.is_lune_project:
-                self.process_lune_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_lune_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             elif self.is_regex_project:
-                self.process_regex_project(self.input_dir, self.output_dir, self.config['target_language'])
+                self.process_regex_project(self.input_dir, self.output_dir, self.config.get('target_language', self.config.get('language', 'English')))
             else:
                 # Handle Ren'Py and RPG Maker with file-based approach
                 if self.is_renpy_project:
@@ -349,10 +349,22 @@ class TranslationManager(QThread):
             
             # Log first few lines being translated for debugging
             if len(batch) > 0:
-                preview = batch[0][:100] + "..." if len(batch[0]) > 100 else batch[0]
-                self.log_message.emit(f"Translating: {preview}")
+                # Debug: Check what type of data we have in batch
+                self.log_message.emit(f"Debug: Batch item 0 type: {type(batch[0])}")
+                if isinstance(batch[0], str):
+                    preview = batch[0][:100] + "..." if len(batch[0]) > 100 else batch[0]
+                    self.log_message.emit(f"Translating: {preview}")
+                else:
+                    self.log_message.emit(f"Error: Batch contains non-string item: {type(batch[0])} - {batch[0]}")
+                    return []
             
             try:
+                # Validate all items in batch are strings
+                for idx, text in enumerate(batch):
+                    if not isinstance(text, str):
+                        self.log_message.emit(f"Error: Batch item {idx} is not a string: {type(text)} - {text}")
+                        return []
+                
                 # Prepare batch for translation
                 batch_dict = {f"Line{j+1}": text for j, text in enumerate(batch)}
                 
@@ -960,8 +972,23 @@ class TranslationManager(QThread):
                 
                 self.log_message.emit(f"Found {len(translatable_content)} translatable sections")
                 
+                # Debug: Check the structure of translatable_content
+                if translatable_content:
+                    first_item = translatable_content[0]
+                    self.log_message.emit(f"Debug: First item type: {type(first_item)}")
+                    self.log_message.emit(f"Debug: First item keys: {list(first_item.keys()) if isinstance(first_item, dict) else 'Not a dict'}")
+                
                 # Prepare texts for translation
-                texts_to_translate = [item["original"] for item in translatable_content]
+                texts_to_translate = []
+                for item in translatable_content:
+                    if isinstance(item, dict) and "original" in item:
+                        texts_to_translate.append(item["original"])
+                    else:
+                        self.log_message.emit(f"Warning: Invalid item structure: {type(item)} - {item}")
+                
+                if not texts_to_translate:
+                    self.log_message.emit(f"No valid texts to translate in {filename}")
+                    continue
                 
                 # Use light novel specific prompt
                 original_prompt = self.config.get('custom_prompt', '')

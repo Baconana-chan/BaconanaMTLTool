@@ -3660,8 +3660,8 @@ class MainWindow(QMainWindow):
             'ollama_url': self.ollama_url_edit.text(),
             'ollama_model': self.ollama_model_edit.text(),
             # Light Novel specific
-            'lightnovel_output_format': self.lightnovel_output_format.currentText(),
-            'custom_prompt': self.prompt_edit.toPlainText(),
+            'lightnovel_output_format': getattr(self, 'lightnovel_output_format', None) and self.lightnovel_output_format.currentText() or 'txt',
+            'custom_prompt': getattr(self, 'prompt_edit', None) and self.prompt_edit.toPlainText() or '',
             'target_language': self.language_combo.currentText()
         }
     
@@ -3670,7 +3670,8 @@ class MainWindow(QMainWindow):
         provider_configs = {}
         
         # Get configurations from provider widgets
-        for provider_widget in self.provider_widgets.values():
+        provider_widgets = getattr(self, 'provider_widgets', {})
+        for provider_widget in provider_widgets.values():
             if provider_widget.enabled_check.isChecked():
                 provider_name = provider_widget.provider_name
                 config = {
@@ -3695,19 +3696,27 @@ class MainWindow(QMainWindow):
     def load_prompt(self):
         """Load custom prompt from file"""
         try:
-            with open('prompt.txt', 'r', encoding='utf-8') as f:
-                self.prompt_edit.setPlainText(f.read())
-            self.log_message("Prompt loaded from prompt.txt")
+            prompt_edit = getattr(self, 'prompt_edit', None)
+            if prompt_edit:
+                with open('prompt.txt', 'r', encoding='utf-8') as f:
+                    prompt_edit.setPlainText(f.read())
+                self.log_message("Prompt loaded from prompt.txt")
+            else:
+                self.log_message("Prompt editor not available")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load prompt: {e}")
     
     def save_prompt(self):
         """Save current prompt to file"""
         try:
-            with open('prompt.txt', 'w', encoding='utf-8') as f:
-                f.write(self.prompt_edit.toPlainText())
-            self.log_message("Prompt saved to prompt.txt")
-            QMessageBox.information(self, "Success", "Prompt saved successfully!")
+            prompt_edit = getattr(self, 'prompt_edit', None)
+            if prompt_edit:
+                with open('prompt.txt', 'w', encoding='utf-8') as f:
+                    f.write(prompt_edit.toPlainText())
+                self.log_message("Prompt saved to prompt.txt")
+                QMessageBox.information(self, "Success", "Prompt saved successfully!")
+            else:
+                self.log_message("Prompt editor not available")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to save prompt: {e}")
     
@@ -3746,7 +3755,9 @@ class MainWindow(QMainWindow):
                 try:
                     with open(prompt_file, 'r', encoding='utf-8') as f:
                         prompt_text = f.read()
-                    self.prompt_edit.setPlainText(prompt_text)
+                    prompt_edit = getattr(self, 'prompt_edit', None)
+                    if prompt_edit:
+                        prompt_edit.setPlainText(prompt_text)
                     self.log_message("Eroge light novel prompt loaded")
                     QMessageBox.information(self, "Success", "Eroge light novel specific prompt loaded!")
                 except FileNotFoundError:
@@ -3754,7 +3765,9 @@ class MainWindow(QMainWindow):
                     from core.lightnovel_processor import LightNovelProcessor
                     processor = LightNovelProcessor()
                     prompt_text = processor.create_specialized_prompt("", True)
-                    self.prompt_edit.setPlainText(prompt_text)
+                    prompt_edit = getattr(self, 'prompt_edit', None)
+                    if prompt_edit:
+                        prompt_edit.setPlainText(prompt_text)
                     self.log_message("Eroge light novel prompt loaded (fallback)")
                     QMessageBox.information(self, "Success", "Eroge light novel prompt loaded!")
             else:
@@ -3763,7 +3776,9 @@ class MainWindow(QMainWindow):
                 try:
                     with open(prompt_file, 'r', encoding='utf-8') as f:
                         prompt_text = f.read()
-                    self.prompt_edit.setPlainText(prompt_text)
+                    prompt_edit = getattr(self, 'prompt_edit', None)
+                    if prompt_edit:
+                        prompt_edit.setPlainText(prompt_text)
                     self.log_message("Light novel prompt loaded")
                     QMessageBox.information(self, "Success", "Light novel specific prompt loaded!")
                 except FileNotFoundError:
@@ -3771,7 +3786,9 @@ class MainWindow(QMainWindow):
                     from core.lightnovel_processor import LightNovelProcessor
                     processor = LightNovelProcessor()
                     prompt_text = processor.create_specialized_prompt("", False)
-                    self.prompt_edit.setPlainText(prompt_text)
+                    prompt_edit = getattr(self, 'prompt_edit', None)
+                    if prompt_edit:
+                        prompt_edit.setPlainText(prompt_text)
                     self.log_message("Light novel prompt loaded (fallback)")
                     QMessageBox.information(self, "Success", "Light novel prompt loaded!")
         except Exception as e:
